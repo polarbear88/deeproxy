@@ -1,0 +1,37 @@
+# ===== 编译产物 =====
+# 本项目可执行文件（交叉编译可能产出带平台后缀的文件）
+/deeproxy
+/deeproxy.exe
+deeproxy_*           # 例如 deeproxy_linux_amd64
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go 测试/覆盖率产物
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go 工作区文件（本地开发用，不应提交）
+go.work
+go.work.sum
+
+# ===== OMC 工具运行时状态 =====
+# .omc/state 为会话级临时状态（PRD、session、HUD 等），属于运行时产物，不入库；
+# 计划与规格（.omc/plans、.omc/specs）作为文档保留，可手动 git add。
+.omc/state/
+.omc/logs/
+.omc/research/
+
+# ralph 会话工作笔记
+progress.txt
+
+# ===== 操作系统/编辑器 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
