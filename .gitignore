@@ -41,3 +41,6 @@ test_config.yaml
 
 # OMC 项目记忆（工具自动生成的状态，不应入库）
 .omc/project-memory.json
+
+# OMC 会话状态（工具自动生成）
+.omc/sessions/

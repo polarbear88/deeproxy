@@ -53,3 +53,17 @@ func (c *idleConn) Write(b []byte) (int, error) {
 	}
 	return n, err
 }
+
+// halfCloser 抽象支持半关闭写方向的连接（*net.TCPConn 实现了它）。
+type halfCloser interface {
+	CloseWrite() error
+}
+
+// CloseWrite 把半关闭转发给底层连接，使包装后的连接仍可参与“写方向先收尾”的
+// 双向中继。底层不支持时返回 nil（退化为不半关闭，不影响正确性）。
+func (c *idleConn) CloseWrite() error {
+	if hc, ok := c.Conn.(halfCloser); ok {
+		return hc.CloseWrite()
+	}
+	return nil
+}

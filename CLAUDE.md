@@ -32,7 +32,9 @@ deeproxy 是一个用 **Go** 编写、**跨平台（Windows / macOS / Linux）**
   │  3. 接收 SOCKS5 请求；仅支持 CONNECT(TCP)
   │       └─ BIND / UDP ASSOCIATE → 回复“命令不支持”并拒绝
   │  4. 目标探测：直接读取 CONNECT 请求里的目标地址 {域名或IP, 端口}
-  │       （只读地址，不做 SNI 嗅探、不做 GeoIP）
+  │       （客户端用 socks5h/远程 DNS 时即为域名；用 socks5/本地 DNS 时为 IP）
+  │       └─ 若为 IP 且未命中 ip-cidr 规则、且开启嗅探 → 先回 success，
+  │           嗅探客户端首包 TLS SNI / HTTP Host 还原域名，再按域名规则选路
   │  5. 规则引擎：按目标顺序匹配规则
   │       ├─ 命中 → 取该规则动作
   │       └─ 不命中 → 默认动作（默认 forward，可配置）
@@ -53,7 +55,7 @@ deeproxy 是一个用 **Go** 编写、**跨平台（Windows / macOS / Linux）**
 |---|------|------|
 | ① | 本地 SOCKS5 服务端 | 监听端口，处理 SOCKS5 握手、强制用户名/密码认证、接收 CONNECT 请求 |
 | ② | 上游代理中继 | 用「从用户名解码出的动态上游」建立 SOCKS5 连接并做双向数据中继 |
-| ③ | 目标探测 | 从 CONNECT 请求读取目标地址（域名 / IPv4 / IPv6 + 端口），不做额外解析 |
+| ③ | 目标探测 | 从 CONNECT 请求读取目标地址（域名 / IPv4 / IPv6 + 端口）；当目标是 IP 且未命中 ip-cidr 时，可嗅探首包 TLS SNI / HTTP Host 还原域名 |
 | ④ | 规则引擎 | 按目标地址做顺序首匹配，输出动作：forward / direct / reject；不命中走默认动作 |
 | ⑤ | 配置系统 | 加载/校验配置文件（监听地址、默认动作、规则列表、日志级别） |
 
@@ -110,6 +112,14 @@ default_action: forward
 # 日志级别：debug | info | warn | error
 log_level: info
 
+# 连接双向空闲超时（秒，默认 300）
+idle_timeout_sec: 300
+
+# 域名嗅探：IP 目标未命中 ip-cidr 时，嗅探 TLS SNI / HTTP Host 还原域名再选路（默认 true）
+sniff_domain: true
+# 嗅探首包等待超时（毫秒，默认 300）
+sniff_timeout_ms: 300
+
 # 分流规则（顺序首匹配）
 rules:
   - { match: "domain-suffix:google.com", action: forward }
@@ -125,7 +135,9 @@ rules:
 ## 七、约束与边界（Constraints）
 
 - **协议范围**：仅支持 SOCKS5 **CONNECT（TCP）**。`BIND` 与 `UDP ASSOCIATE` 不支持，遇到时回复 SOCKS5「命令不支持」并拒绝。
-- **目标探测范围**：仅读取 CONNECT 请求中的目标地址。**不做** TLS SNI 嗅探、**不做** HTTP Host 解析、**不做** GeoIP（前提：客户端使用远程 DNS / `socks5h`，让代理拿到域名）。
+- **目标探测范围**：默认读取 CONNECT 请求中的目标地址；当目标是 IP 且未命中任何 ip-cidr 规则、且 `sniff_domain` 开启时，会嗅探客户端首包的 **TLS SNI** 或 **HTTP Host** 还原域名后再按域名规则选路。**不做** GeoIP / 按地理位置分流。
+  - 嗅探需先回 success 再读首包，故「嗅探后命中 `reject`」表现为**连接被关闭**（无法再回标准 0x02 拒绝码）；嗅探超时或非 TLS/HTTP 流量则回退到默认动作。
+  - 仍推荐客户端用远程 DNS（`socks5h`）直接发域名：路径最短、无需嗅探、规则命中也能回精确拒绝码。
 - **认证**：本地服务强制用户名/密码认证；无有效编码用户名一律拒绝。
 - **跨平台**：必须在 Windows / macOS / Linux 编译运行；目标产物为**单一静态二进制**，建议覆盖 `amd64` 与 `arm64`。
 - **目标地址类型**：CONNECT 目标支持域名 / IPv4 / IPv6。
@@ -135,7 +147,6 @@ rules:
 ## 八、非目标（Non-Goals，首版明确不做）
 
 - 不支持 UDP ASSOCIATE / BIND。
-- 不做 IP→域名还原（SNI/Host 嗅探）。
 - 不做 GeoIP / 按地理位置分流。
 - 不做配置文件里的静态上游、多上游负载均衡 / 故障切换（上游由用户名动态决定）。
 - 不做 Web / GUI 管理界面（首版 CLI + 配置文件即可）。

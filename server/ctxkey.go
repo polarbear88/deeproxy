@@ -5,15 +5,15 @@ import (
 	"deeproxy/rule"
 )
 
-// decision 是 WithRule.Allow 阶段做出的“放行类”判定结果，
-// 通过 context 传递给后续的拨号 hook，避免规则被重复求值（规则只在 Allow 跑一次）。
-//
-// 仅当动作为 forward/direct 时才会被放入 context；reject 与非 CONNECT 命令
-// 在 Allow 阶段直接返回 false，由库回 RepRuleFailure，不会走到拨号 hook。
+// decision 是 connectRule.Allow 阶段做出的判定结果，通过 context 传给 ConnectHandle，
+// 避免规则重复求值。reject 与非 CONNECT 在 Allow 阶段已直接拒绝，不会进入 ConnectHandle。
 type decision struct {
-	action   rule.Action   // forward 或 direct
+	action   rule.Action   // forward 或 direct（needsSniff 时此字段无意义，待嗅探后确定）
 	upstream auth.Upstream // 本连接动态上游（forward 时使用）
-	host     string        // 目标主机（用于日志）
+	host     string        // 目标主机（域名或 IP，用于日志与回退）
+	// needsSniff 为 true 表示：目标是 IP、未命中任何 ip-cidr 规则、且启用了嗅探，
+	// 需要在 ConnectHandle 中先回 success、再 peek 客户端首包嗅探域名后才能选路。
+	needsSniff bool
 }
 
 // ctxKey 是放入 context 的私有 key 类型，避免与其他包的 key 冲突。

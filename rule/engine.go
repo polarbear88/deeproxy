@@ -91,28 +91,36 @@ func NewEngine(specs []config.RuleSpec, def Action) (*Engine, error) {
 // Match 对目标主机做顺序首匹配，返回命中规则的动作；不命中返回默认动作。
 // host 为纯主机部分（不含端口）：域名或 IP 字面量。
 func (e *Engine) Match(host string) Action {
+	a, _ := e.MatchRule(host)
+	return a
+}
+
+// MatchRule 与 Match 相同，但额外返回是否命中了某条显式规则。
+// matched=false 表示走的是默认动作。嗅探逻辑用它来判断：
+// 当 IP 目标未命中任何 ip-cidr 规则时，才需要嗅探域名再判一次。
+func (e *Engine) MatchRule(host string) (action Action, matched bool) {
 	ip := net.ParseIP(host) // 非 nil 表示 host 是 IP 字面量
 	for _, r := range e.rules {
 		switch r.kind {
 		case kindDomain:
 			// 精确域名：仅当目标是域名且完全相等时命中。
 			if ip == nil && host == r.pattern {
-				return r.action
+				return r.action, true
 			}
 		case kindDomainSuffix:
 			// 域名后缀：host == pattern 或 host 以 "."+pattern 结尾。
 			// 后者保证 google.com 命中 www.google.com 但不误命中 notgoogle.com。
 			if ip == nil && (host == r.pattern || strings.HasSuffix(host, "."+r.pattern)) {
-				return r.action
+				return r.action, true
 			}
 		case kindIPCIDR:
 			// IP 网段：仅当目标是 IP 且落在网段内时命中。
 			if ip != nil && r.ipNet.Contains(ip) {
-				return r.action
+				return r.action, true
 			}
 		}
 	}
-	return e.defaultAction
+	return e.defaultAction, false
 }
 
 // isValidAction 判断动作是否为三枚举之一。

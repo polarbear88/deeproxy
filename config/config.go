@@ -18,6 +18,7 @@ const (
 	defaultAction      = "forward"        // 规则都不命中时默认走上游
 	defaultLogLevel    = "info"
 	defaultIdleTimeout = 300 // 连接双向空闲超时（秒），用于回收半开连接
+	defaultSniffTimeMs = 300 // 嗅探客户端首包的等待超时（毫秒）
 )
 
 // 合法的动作集合与规则匹配前缀集合，用于配置校验。
@@ -40,6 +41,17 @@ type Config struct {
 	LogLevel       string     `yaml:"log_level"`        // 日志级别 debug/info/warn/error
 	IdleTimeoutSec int        `yaml:"idle_timeout_sec"` // 空闲超时（秒）
 	Rules          []RuleSpec `yaml:"rules"`            // 分流规则（顺序首匹配）
+
+	// SniffDomain 控制：当目标是 IP 且未命中 ip-cidr 规则时，是否嗅探
+	// 客户端首包（TLS SNI / HTTP Host）还原域名再按域名规则选路。
+	// 用 *bool 以区分“未配置”（默认 true）与“显式 false”（关闭）。
+	SniffDomain    *bool `yaml:"sniff_domain"`
+	SniffTimeoutMs int   `yaml:"sniff_timeout_ms"` // 嗅探首包等待超时（毫秒）
+}
+
+// SniffEnabled 返回是否启用域名嗅探（未配置时默认启用）。
+func (c *Config) SniffEnabled() bool {
+	return c.SniffDomain == nil || *c.SniffDomain
 }
 
 // Load 读取并解析指定路径的 YAML 配置，填充默认值后做合法性校验。
@@ -75,6 +87,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.IdleTimeoutSec <= 0 {
 		c.IdleTimeoutSec = defaultIdleTimeout
+	}
+	if c.SniffTimeoutMs <= 0 {
+		c.SniffTimeoutMs = defaultSniffTimeMs
 	}
 }
 

@@ -34,6 +34,35 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.IdleTimeoutSec != defaultIdleTimeout {
 		t.Errorf("IdleTimeoutSec 默认值 = %d, 期望 %d", cfg.IdleTimeoutSec, defaultIdleTimeout)
 	}
+	// 嗅探：未配置时默认启用、超时默认 300ms。
+	if !cfg.SniffEnabled() {
+		t.Error("SniffDomain 未配置时应默认启用")
+	}
+	if cfg.SniffTimeoutMs != defaultSniffTimeMs {
+		t.Errorf("SniffTimeoutMs 默认值 = %d, 期望 %d", cfg.SniffTimeoutMs, defaultSniffTimeMs)
+	}
+}
+
+// TestSniffToggle 覆盖：sniff_domain 显式 false 能关闭，显式 true/缺省启用。
+func TestSniffToggle(t *testing.T) {
+	off, err := Load(writeTemp(t, "sniff_domain: false\nrules: []\n"))
+	if err != nil {
+		t.Fatalf("Load 报错: %v", err)
+	}
+	if off.SniffEnabled() {
+		t.Error("sniff_domain: false 应关闭嗅探")
+	}
+
+	on, err := Load(writeTemp(t, "sniff_domain: true\nsniff_timeout_ms: 800\nrules: []\n"))
+	if err != nil {
+		t.Fatalf("Load 报错: %v", err)
+	}
+	if !on.SniffEnabled() {
+		t.Error("sniff_domain: true 应启用嗅探")
+	}
+	if on.SniffTimeoutMs != 800 {
+		t.Errorf("SniffTimeoutMs = %d, 期望 800", on.SniffTimeoutMs)
+	}
 }
 
 // TestLoadValid 覆盖 AC8：完整合法配置正常加载。
