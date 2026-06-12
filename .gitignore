@@ -38,3 +38,6 @@ Thumbs.db
 
 
 test_config.yaml
+
+# OMC 项目记忆（工具自动生成的状态，不应入库）
+.omc/project-memory.json
