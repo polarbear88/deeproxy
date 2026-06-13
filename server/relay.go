@@ -85,3 +85,49 @@ func relay(clientW io.Writer, clientR io.Reader, target net.Conn) error {
 	}
 	return nil
 }
+
+// copyResult 是单个中继方向的结果（字节数 + 错误）。
+type copyResult struct {
+	n   int64
+	err error
+}
+
+// relayCounted 与 relay 行为完全一致（双向中继 + half-close），但额外返回
+// 各方向的字节数，供连接结束后【一次性】埋点到 stats（零侵入字节中继热路径）。
+//
+// 性能说明（一号硬约束）：字节计数来自 io.Copy 自身的返回值 n，热循环仍是纯
+// io.Copy，无额外 per-byte 工作、无锁；统计只在 relay 返回后由调用方调用一次
+// stats.AddUp/AddDown（atomic），完全不进入字节中继循环。
+//
+// 返回 up=客户端→目标字节数（上行）、down=目标→客户端字节数（下行）、err=首个出错方向。
+func relayCounted(clientW io.Writer, clientR io.Reader, target net.Conn) (up, down int64, err error) {
+	upc := make(chan copyResult, 1)
+	downc := make(chan copyResult, 1)
+
+	// 客户端 → 目标（上行）。
+	go func() {
+		n, e := io.Copy(target, clientR)
+		if cw, ok := target.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+		upc <- copyResult{n: n, err: e}
+	}()
+
+	// 目标 → 客户端（下行）。
+	go func() {
+		n, e := io.Copy(clientW, target)
+		if cw, ok := clientW.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+		downc <- copyResult{n: n, err: e}
+	}()
+
+	// 等待两个方向都结束，累计字节数；保留首个非 nil 错误。
+	ur := <-upc
+	dr := <-downc
+	up, down = ur.n, dr.n
+	if ur.err != nil {
+		return up, down, ur.err
+	}
+	return up, down, dr.err
+}

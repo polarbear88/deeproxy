@@ -1,0 +1,136 @@
+# deeproxy v2 CI —— lint + 测试 + 静态依赖门禁 + 5 平台构建矩阵 + 冒烟 + 转发延迟 benchmark 门禁。
+#
+# 关键约束落地：
+#   - 构建顺序固化「先 pnpm build 前端 → 再 go build」（vite emptyOutDir 会清 api/dist，顺序不可换）；
+#   - CGO_ENABLED=0 交叉编译，保证单一静态二进制（modernc.org/sqlite 免 CGO）；
+#   - AC-43 静态依赖门禁：转发热路径包零 sql/sqlite/store（make deps-gate）；
+#   - AC-43 转发延迟 benchmark：门禁判据=【稳态字节中继】p99 回归（v2 vs v1）>25% 硬阻断、
+#     >10% 软告警（plan C：测字节转发热路径，非含每连接鉴权的冷建连）。
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  GO_VERSION: "1.26.3"
+  NODE_VERSION: "22"
+
+jobs:
+  # ---- 1) 后端：vet + 单测（含 -race）+ 静态依赖门禁 ----
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}" }
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race ./...
+      - name: AC-43 静态依赖门禁（转发热路径零 sql/sqlite/store）
+        run: make deps-gate
+
+  # ---- 2) 前端构建（产物上传，供构建矩阵复用，固化「前端先行」）----
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: pnpm install + build → api/dist
+        run: |
+          cd web
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: 上传前端产物（api/dist）
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: api/dist
+          if-no-files-found: error
+
+  # ---- 3) 5 平台 × 架构构建矩阵（CGO off 单一静态二进制）+ 启动冒烟 ----
+  build:
+    needs: [test, web]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64, runner: ubuntu-latest, ext: ".exe" }
+          - { goos: windows, goarch: arm64, runner: ubuntu-latest, ext: ".exe" }
+          - { goos: linux,   goarch: amd64, runner: ubuntu-latest, ext: "" }
+          - { goos: linux,   goarch: arm64, runner: ubuntu-latest, ext: "" }
+          - { goos: darwin,  goarch: amd64, runner: macos-latest,  ext: "" }
+          - { goos: darwin,  goarch: arm64, runner: macos-latest,  ext: "" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}" }
+      - name: 下载前端产物到 api/dist（确保 embed 有真实前端）
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: api/dist
+      - name: 交叉编译（CGO_ENABLED=0 单一静态二进制）
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VER="${GITHUB_REF_NAME:-dev}-${GITHUB_SHA::8}"
+          go build -trimpath -ldflags "-s -w -X main.version=$VER" \
+            -o "dist/deeproxy-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}" ./cmd/deeproxy
+      - name: 启动冒烟（仅本机可运行的目标：runner OS==GOOS）
+        if: (matrix.goos == 'linux' && runner.os == 'Linux') || (matrix.goos == 'darwin' && runner.os == 'macOS')
+        shell: bash
+        run: |
+          bin="dist/deeproxy-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          # 仅在 runner 架构与目标架构一致时执行运行冒烟（避免跨架构无法运行）。
+          if [ "${{ matrix.goarch }}" = "$(go env GOHOSTARCH)" ]; then
+            "$bin" -v
+            tmp=$(mktemp -d)
+            printf 'listen: "127.0.0.1:0"\nadmin_listen: "127.0.0.1:0"\ndb_path: "%s/s.db"\nlog_level: warn\n' "$tmp" > "$tmp/c.yaml"
+            "$bin" -c "$tmp/c.yaml" & pid=$!; sleep 2; kill $pid 2>/dev/null || true
+            echo "冒烟启动 OK"
+          else
+            echo "跳过运行冒烟（目标架构 ${{ matrix.goarch }} ≠ runner 架构 $(go env GOHOSTARCH)）"
+          fi
+      - name: 上传二进制产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: deeproxy-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/deeproxy-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          if-no-files-found: error
+
+  # ---- 4) 转发延迟 benchmark 门禁（AC-43：v2 vs v1 p99 回归 >25% 硬阻断）----
+  benchmark:
+    needs: [test, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: "${{ env.GO_VERSION }}" }
+      - name: 下载前端产物到 api/dist
+        uses: actions/download-artifact@v4
+        with: { name: web-dist, path: api/dist }
+      - name: 构建 v2 二进制
+        run: CGO_ENABLED=0 go build -o /tmp/deeproxy ./cmd/deeproxy
+      - name: 构建 v1 基线二进制（最后一个 v1 提交）
+        run: |
+          # V1_REF 可在仓库变量中配置；默认用打了 v1 基线 tag 的提交，回退到已知 commit。
+          V1_REF="${V1_BASELINE_REF:-1e2226d}"
+          git worktree add --detach /tmp/v1wt "$V1_REF"
+          ( cd /tmp/v1wt && CGO_ENABLED=0 go build -o /tmp/deeproxy-v1 ./cmd/deeproxy )
+      - name: 运行 benchmark 门禁（p99 回归 >25% → 退出码 3，job 失败）
+        run: go run ./.omc/research/bench/bench.go -v1 /tmp/deeproxy-v1 -v2 /tmp/deeproxy

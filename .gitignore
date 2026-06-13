@@ -44,3 +44,25 @@ test_config.yaml
 
 # OMC 会话状态（工具自动生成）
 .omc/sessions/
+
+# ===== 前端（web/）=====
+# 依赖与构建缓存不入库
+web/node_modules/
+web/dist/
+web/.vite/
+# 前端构建产物输出到 api/dist 供 Go embed；产物由 CI/本地构建生成，不入库，
+# 但保留占位文件（.gitkeep 与 index.html）保证未构建时 go:embed 仍可编译（计划 M2）。
+api/dist/assets/
+api/dist/favicon.svg
+
+#===== 构建产物 =====
+# 注意：此规则会匹配任意层级的 dist/（含 api/dist）。下面用例外规则放行
+# api/dist 的 embed 占位文件（index.html / .gitkeep），保证全新 clone 后
+# //go:embed all:dist 仍能编译（assets 等真实产物仍由上面 api/dist/assets/ 忽略）。
+dist/
+!api/dist/
+api/dist/*
+!api/dist/.gitkeep
+!api/dist/index.html
+deeproxy.db
+deeproxy.db-*

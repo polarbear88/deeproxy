@@ -1,120 +1,32 @@
-// Package config 负责加载、校验 YAML 配置文件，并为缺省字段填充默认值。
+// Package config 承载 deeproxy 的【启动引导项】并提供内置默认值。
 //
-// 注意：上游 SOCKS5 代理不在配置文件中（由客户端用户名动态携带），
-// 因此配置只承载“本地监听 / 默认动作 / 日志级别 / 空闲超时 / 分流规则”。
+// v2 重大变化（取消配置文件）：分组 / 规则 / 用户 / 授权早已迁入 SQLite；本次进一步把
+// 原 YAML 仅剩的运行期项（default_action / log_level / idle_timeout / sniff_*）也迁入
+// system_setting 表，由后台动态修改（见 store.SystemSetting / snapshot.Settings）。
+// 因此本包不再读写任何配置文件，只保留【无法做成数据库设置的引导项】：
+//   - Listen：本地 SOCKS5 监听地址（由 --socks5 端口 + 固定 host 组装）；
+//   - AdminListen：Web 后台监听地址（由 --web 端口 + 固定 host 组装）；
+//   - DBPath：SQLite 数据库文件路径（鸡生蛋问题——设置都存在库里，库路径本身不能做成设置）。
+//
+// 注意：上游 SOCKS5 代理不在此（由客户端用户名动态携带）。
 package config
 
-import (
-	"fmt"
-	"os"
-	"strings"
-
-	"gopkg.in/yaml.v3"
-)
-
-// 默认值常量：当配置文件未显式给出对应字段时使用。
-const (
-	defaultListen      = "127.0.0.1:1080" // 默认仅监听本地回环，避免误暴露到公网
-	defaultAction      = "forward"        // 规则都不命中时默认走上游
-	defaultLogLevel    = "info"
-	defaultIdleTimeout = 300 // 连接双向空闲超时（秒），用于回收半开连接
-	defaultSniffTimeMs = 300 // 嗅探客户端首包的等待超时（毫秒）
-)
-
-// 合法的动作集合与规则匹配前缀集合，用于配置校验。
-var (
-	validActions     = map[string]bool{"forward": true, "direct": true, "reject": true}
-	validMatchPrefix = map[string]bool{"domain": true, "domain-suffix": true, "ip-cidr": true}
-)
-
-// RuleSpec 是配置文件中单条规则的原始形态。
-// Match 形如 "domain-suffix:google.com"；Action 为 forward/direct/reject。
+// RuleSpec 是单条规则的原始形态（match/action）。
+//
+// 为什么仍放在 config 包：rule 包（转发热路径）import config 用此类型做规则编译输入；
+// 若把它移走会牵动 rule/snapbuild 等多包的依赖关系。规则数据本身来自 SQLite，
+// 物化时由 snapbuild 转成本类型喂给 rule 引擎，本类型仅作「规则的数据载体」。
 type RuleSpec struct {
-	Match  string `yaml:"match"`
-	Action string `yaml:"action"`
+	Match  string // 形如 "domain-suffix:google.com"
+	Action string // forward/direct/reject
 }
 
-// Config 是 deeproxy 的完整配置。
+// Config 是 deeproxy 的启动引导配置（仅监听地址与数据库路径，无运行期可变项）。
+//
+// 运行期可变设置（默认动作 / 日志级别 / 空闲超时 / 嗅探开关与超时）一律不在此，
+// 而由 system_setting 表承载、物化进 snapshot.Snapshot，支持后台热改。
 type Config struct {
-	Listen         string     `yaml:"listen"`           // 本地 SOCKS5 监听地址
-	DefaultAction  string     `yaml:"default_action"`   // 规则不命中时的默认动作
-	LogLevel       string     `yaml:"log_level"`        // 日志级别 debug/info/warn/error
-	IdleTimeoutSec int        `yaml:"idle_timeout_sec"` // 空闲超时（秒）
-	Rules          []RuleSpec `yaml:"rules"`            // 分流规则（顺序首匹配）
-
-	// SniffDomain 控制：当目标是 IP 且未命中 ip-cidr 规则时，是否嗅探
-	// 客户端首包（TLS SNI / HTTP Host）还原域名再按域名规则选路。
-	// 用 *bool 以区分“未配置”（默认 true）与“显式 false”（关闭）。
-	SniffDomain    *bool `yaml:"sniff_domain"`
-	SniffTimeoutMs int   `yaml:"sniff_timeout_ms"` // 嗅探首包等待超时（毫秒）
-}
-
-// SniffEnabled 返回是否启用域名嗅探（未配置时默认启用）。
-func (c *Config) SniffEnabled() bool {
-	return c.SniffDomain == nil || *c.SniffDomain
-}
-
-// Load 读取并解析指定路径的 YAML 配置，填充默认值后做合法性校验。
-// 任一字段非法都会返回带中文说明的 error，调用方应据此终止启动。
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("读取配置文件失败 %q: %w", path, err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析 YAML 配置失败: %w", err)
-	}
-
-	cfg.applyDefaults()
-	if err := cfg.validate(); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-// applyDefaults 为未显式配置的字段填充默认值。
-func (c *Config) applyDefaults() {
-	if strings.TrimSpace(c.Listen) == "" {
-		c.Listen = defaultListen
-	}
-	if strings.TrimSpace(c.DefaultAction) == "" {
-		c.DefaultAction = defaultAction
-	}
-	if strings.TrimSpace(c.LogLevel) == "" {
-		c.LogLevel = defaultLogLevel
-	}
-	if c.IdleTimeoutSec <= 0 {
-		c.IdleTimeoutSec = defaultIdleTimeout
-	}
-	if c.SniffTimeoutMs <= 0 {
-		c.SniffTimeoutMs = defaultSniffTimeMs
-	}
-}
-
-// validate 校验关键字段的合法性。
-func (c *Config) validate() error {
-	// listen 不可为空（applyDefaults 后理论上已有值，这里防御性再查一次）。
-	if strings.TrimSpace(c.Listen) == "" {
-		return fmt.Errorf("listen 不能为空")
-	}
-	// 默认动作必须是三枚举之一。
-	if !validActions[c.DefaultAction] {
-		return fmt.Errorf("default_action 非法: %q（应为 forward/direct/reject）", c.DefaultAction)
-	}
-	// 逐条校验规则的动作与匹配前缀。
-	for i, r := range c.Rules {
-		if !validActions[r.Action] {
-			return fmt.Errorf("第 %d 条规则 action 非法: %q（应为 forward/direct/reject）", i+1, r.Action)
-		}
-		prefix, pattern, ok := strings.Cut(r.Match, ":")
-		if !ok || !validMatchPrefix[prefix] {
-			return fmt.Errorf("第 %d 条规则 match 前缀非法: %q（应为 domain:/domain-suffix:/ip-cidr:）", i+1, r.Match)
-		}
-		if strings.TrimSpace(pattern) == "" {
-			return fmt.Errorf("第 %d 条规则 match 模式为空: %q", i+1, r.Match)
-		}
-	}
-	return nil
+	Listen      string // 本地 SOCKS5 监听地址，如 "0.0.0.0:1768"
+	AdminListen string // Web 后台监听地址，如 "0.0.0.0:1769"
+	DBPath      string // SQLite 数据库文件路径
 }

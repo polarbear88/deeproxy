@@ -103,13 +103,7 @@ func TestUpstreamAddr(t *testing.T) {
 	}
 }
 
-// TestCredentialValid 覆盖 AC2：Credential.Valid 与解码结果一致。
-func TestCredentialValid(t *testing.T) {
-	var c Credential
-	if !c.Valid(b64("u:p@host.com:80"), "x", "1.2.3.4:5") {
-		t.Fatal("合法用户名应认证通过")
-	}
-	if c.Valid("not-base64-@@@", "x", "1.2.3.4:5") {
-		t.Fatal("非法用户名应认证失败")
-	}
-}
+// 说明：v1 的 TestCredentialValid（整段用户名 = base64 上游）已随 v2 用户名契约
+// 重写而移除——v2 用户名为 user-group[-尾段]，Credential.Valid 需读快照做 bcrypt
+// 鉴权。新的 Credential/Authenticate 测试见 credential_test.go。
+// DecodeUpstream/EncodeUpstream 仍保留并由 Type A 尾段复用，其用例见本文件其余部分。
