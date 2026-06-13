@@ -1,0 +1,78 @@
+/* 全局样式与主题变量定义
+ * 暗/亮模式通过给 <html> 加 .dark 类切换（Element Plus 暗色方案约定）。
+ * 这里只定义少量自定义变量与基础重置，组件级样式各自 scoped。 */
+
+/* Element Plus 暗色主题（官方提供） */
+@use 'element-plus/theme-chalk/dark/css-vars.css';
+
+:root {
+  /* 自定义品牌色，与 favicon 蓝保持一致 */
+  --dp-brand: #409eff;
+  /* 页面内容区背景（亮色） */
+  --dp-content-bg: #f5f7fa;
+  /* 侧边栏宽度 */
+  --dp-aside-width: 220px;
+  --dp-aside-width-collapsed: 64px;
+}
+
+html.dark {
+  /* 暗色下内容区背景 */
+  --dp-content-bg: #141414;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  background-color: var(--dp-content-bg);
+}
+
+/* 通用工具类 */
+.dp-page {
+  padding: 16px;
+}
+
+.dp-card-gap {
+  margin-bottom: 16px;
+}
+
+.flex-row {
+  display: flex;
+  align-items: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.text-muted {
+  color: var(--el-text-color-secondary);
+}
+
+/* 滚动条美化（仅 webkit） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--el-border-color-darker);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

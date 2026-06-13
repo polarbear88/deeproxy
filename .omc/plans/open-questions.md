@@ -1,0 +1,11 @@
+# Open Questions
+
+## ralplan-deeproxy-v2 - 2026-06-13（Architect + Critic REVISE 后更新）
+- [x] ~~D0：go-socks5 鉴权对象跨阶段传递机制~~ — **已定稿 D0-0**：源码证实 `AuthContext.Payload` 含 user+password 且三阶段同 goroutine/同连接/不跨连接共享；沿用 v1 context(`decisionKey`) 机制，零并发风险。原 D0-A(sync.Map 待取表)已删除（解决伪问题）。
+- [x] ~~统计聚合桶时间粒度~~ — **已定稿（M3）**：单一分钟桶（group/user 维度）为唯一存储粒度；7d 视图查询期 `GROUP BY strftime('%Y-%m-%d %H',...)` 降采样。基数预算约 86.4 万行/30 天/20 活跃组合（AC-12/13/24）。
+- [x] ~~转发延迟回归阈值~~ — **已定稿（M4）**：p99 回归 >10% 软告警、>25% 硬阻断；固定可复现环境（回环 echo、固定并发/连接数、统一 warmup）（AC-43）。
+- [x] ~~系统日志实时推送传输~~ — **已定稿**：默认 Gin SSE（单向更轻、无需 gorilla/websocket）；仅确需双向交互时引入 WebSocket（AC-33/34/35）。
+- [x] ~~健康检查对 Type A 组适用性~~ — **已定稿（G2）**：Type A 池为空，health worker 跳过；前端 Type A 隐藏健康检查 UI（AC-15/28）。
+- [ ] 管理员会话是否需重启保活 — 当前定稿内存会话（重启需重登）。若运维要求重启不掉线，升级为 SQLite sessions 表（D2-A 变体，AC-20）。**非阻塞**。
+- [ ] G4 配置导入冲突策略 — 首版用「整体覆盖 + 导入前备份当前配置」，是否满足运维迁移预期需确认；`schemaVersion` 版本化 + Rebuild 失败不 Swap 回滚已定（AC-37/44）。**非阻塞**。
+- [ ] G5 登录限流参数 — 暂定 5 次失败锁定 5 分钟、bcrypt `DefaultCost`，上线前可按安全要求调整。**非阻塞**。
