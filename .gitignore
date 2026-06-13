@@ -63,6 +63,5 @@ dist/
 !api/dist/
 api/dist/*
 !api/dist/.gitkeep
-!api/dist/index.html
 deeproxy.db
 deeproxy.db-*
