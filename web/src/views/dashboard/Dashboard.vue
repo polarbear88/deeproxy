@@ -435,6 +435,15 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/responsive.scss' as r;
+
+/* 手机端：el-col 换行/单列堆叠后，el-row 的 :gutter 只管水平间距、不含行间距，
+ * 这里给行加 row-gap 让上下卡片之间有垂直间距，避免折行后挤在一起。 */
+.el-row {
+  @include r.mobile {
+    row-gap: 12px;
+  }
+}
 /* 等高卡片（AC-2.1）：el-row align=stretch 已让两列等高，
    卡片再填满列高，使「运行健康」与「连接说明」底边对齐 */
 .full-card {

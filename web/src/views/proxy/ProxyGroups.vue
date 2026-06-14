@@ -10,9 +10,12 @@ import EChart from '@/components/EChart.js'
 import * as groupApi from '@/api/group'
 import * as dashApi from '@/api/dashboard'
 import { formatBytes, formatNumber } from '@/utils/format'
+import { useAppStore } from '@/stores/app'
 
 // i18n：组件③类型改名、组件⑤「流量」按钮、组件⑦校验文案均经 t() 翻译
 const { t } = useI18n()
+// 应用 store：读 isMobile 控制抽屉在手机端的宽度（结构尺寸走 JS 真相源）
+const appStore = useAppStore()
 
 const loading = ref(false)
 const groups = ref([])
@@ -456,7 +459,7 @@ onMounted(loadGroups)
     </el-dialog>
 
     <!-- 上游代理抽屉（仅 Type B）-->
-    <el-drawer v-model="upstreamDrawer.visible" :title="t('proxyGroups.poolDrawerTitle', { name: upstreamDrawer.group?.name || '' })" size="60%">
+    <el-drawer v-model="upstreamDrawer.visible" :title="t('proxyGroups.poolDrawerTitle', { name: upstreamDrawer.group?.name || '' })" :size="appStore.isMobile ? '90%' : '60%'">
       <div class="drawer-toolbar">
         <span class="text-muted">{{ t('proxyGroups.poolTemplateHint') }}</span>
         <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateUpstream">{{ t('proxyGroups.addUpstream') }}</el-button>
@@ -568,7 +571,7 @@ onMounted(loadGroups)
     <el-drawer
       v-model="chartDrawer.visible"
       :title="`${t('group.trafficDrawerTitle')} - ${chartDrawer.group?.name || ''}`"
-      size="60%"
+      :size="appStore.isMobile ? '90%' : '60%'"
     >
       <el-divider content-position="left">{{ t('group.trafficDrawerTitle') }}（24h）</el-divider>
       <EChart :option="groupChartOption" height="260px" />
@@ -663,6 +666,8 @@ onMounted(loadGroups)
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/responsive.scss' as r;
+
 .drawer-toolbar {
   display: flex;
   justify-content: space-between;
@@ -674,6 +679,11 @@ onMounted(loadGroups)
   gap: 10px;
   align-items: center;
   margin-bottom: 10px;
+  // 手机端：筛选条允许换行，避免输入框/按钮一行挤爆溢出
+  @include r.mobile {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
 }
 .bulk-bar {
   display: flex;

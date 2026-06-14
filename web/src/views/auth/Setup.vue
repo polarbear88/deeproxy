@@ -99,7 +99,9 @@ async function onSubmit() {
   color: var(--el-text-color-regular);
 }
 .auth-card {
-  width: 400px;
+  /* 桌面 400px（注意：与 Login 的 380px 不同，须保留各自原值）；
+     手机端用 min(400px, 92vw) 自适应居中不溢出（AC-9） */
+  width: min(400px, 92vw);
   padding: 12px 8px;
 }
 .auth-brand {

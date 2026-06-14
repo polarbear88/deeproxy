@@ -9,11 +9,14 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import * as sysApi from '@/api/system'
 import { useUserStore } from '@/stores/user'
+import { useAppStore } from '@/stores/app'
 
 // i18n：组件④设置卡片标题与字段标签经 t() 翻译
 const { t } = useI18n()
 const router = useRouter()
 const userStore = useUserStore()
+// 应用 store：手机端把表单 label 置顶（label-width 150px 在窄屏会挤压输入框）
+const appStore = useAppStore()
 const loading = ref(false)
 
 // ===== 基础设置 =====
@@ -156,7 +159,7 @@ onMounted(loadSettings)
          字段与 saveSettings() 载荷一一对应，未删任何字段；script 不动，仅模板由「4 张并排小卡」改为「单卡分区」。 -->
     <el-card v-loading="loading" class="dp-card-gap">
       <template #header><span>{{ t('menu.system') }}</span></template>
-      <el-form label-width="150px">
+      <el-form label-width="150px" :label-position="appStore.isMobile ? 'top' : 'right'">
         <!-- 分区：服务器与连接 -->
         <el-divider content-position="left">{{ t('settings.serverConn') }}</el-divider>
         <el-form-item :label="t('settings.adminAccount')">
@@ -243,7 +246,7 @@ onMounted(loadSettings)
       <el-col :xs="24" :lg="12">
         <el-card class="dp-card-gap full-card">
           <template #header><span>{{ t('settings.adminPassword') }}</span></template>
-          <el-form label-width="110px">
+          <el-form label-width="110px" :label-position="appStore.isMobile ? 'top' : 'right'">
             <el-form-item :label="t('settings.currentPassword')">
               <el-input v-model="pwdForm.oldPassword" type="password" show-password />
             </el-form-item>

@@ -41,6 +41,10 @@ export default {
   setup(props) {
     const el = ref(null)
     let chart = null
+    // 容器尺寸监听器：覆盖「视口不变但容器宽高变化」的场景，
+    // 例如移动端导航抽屉开合、侧边栏显隐、内容抽屉(size 60%/90%)切换——
+    // 这些都不触发 window.resize，仅靠 window 监听会让图表停留在旧/零尺寸。
+    let ro = null
     const themeStore = useThemeStore()
 
     // 容器是否具备可见尺寸：keep-alive 隐藏页面时容器宽高为 0，
@@ -69,6 +73,12 @@ export default {
     onMounted(() => {
       createChart()
       window.addEventListener('resize', resize)
+      // 用 ResizeObserver 监听容器自身尺寸变化（浏览器原生全局，无需 import）。
+      // 回调里走 resize()，其内部 hasSize 守卫会在隐藏(零尺寸)时跳过，安全。
+      if (el.value && typeof ResizeObserver !== 'undefined') {
+        ro = new ResizeObserver(() => resize())
+        ro.observe(el.value)
+      }
     })
 
     // keep-alive 复用：返回本页时 onMounted 不再触发。
@@ -81,6 +91,11 @@ export default {
 
     onBeforeUnmount(() => {
       window.removeEventListener('resize', resize)
+      // 断开容器尺寸监听，避免实例销毁后回调仍持有已 dispose 的 chart 引用
+      if (ro) {
+        ro.disconnect()
+        ro = null
+      }
       if (chart) {
         chart.dispose()
         chart = null

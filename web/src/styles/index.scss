@@ -74,6 +74,12 @@ body {
 .dp-page {
   padding: 16px;
 }
+/* 手机端：减小页面内边距释放横向空间（全局一处生效，各页面 dp-page 通用） */
+@media (max-width: 767.98px) {
+  .dp-page {
+    padding: 8px;
+  }
+}
 
 .dp-card-gap {
   margin-bottom: 16px;
@@ -88,6 +94,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+/* 手机端：所有 flex-between 行（卡片头部标题+操作区等）允许换行，
+ * 避免标题与按钮组/工具条在窄屏同行溢出（全局一处生效，替代各视图重复声明）。 */
+@media (max-width: 767.98px) {
+  .flex-between {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
 }
 
 .text-muted {
@@ -124,4 +138,16 @@ body {
 .el-dropdown-menu,
 .el-popper {
   border-radius: 10px;
+}
+
+/* 手机端弹窗宽度自适应：EP 2.14.x 把 width="560px" 渲染为 inline CSS 变量
+ * --el-dialog-width，真实宽度来自 .el-dialog{width:var(--el-dialog-width,50%)}（特异度 0,1,0）。
+ * 因此用 `body .el-dialog`（特异度 0,1,1）在 width 属性上天然胜出，无需 !important，
+ * 一处生效全部 dialog，桌面端不受影响（仅 <768px 媒体查询内）。
+ * 注意：dialog 与 el-drawer 均 append-to-body 平级渲染，本规则不会误伤 drawer 内叠加的 dialog。 */
+@media (max-width: 767.98px) {
+  body .el-dialog {
+    width: 92%;
+    max-width: 92%;
+  }
 }

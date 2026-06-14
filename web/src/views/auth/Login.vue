@@ -92,7 +92,8 @@ async function onSubmit() {
   color: var(--el-text-color-regular);
 }
 .auth-card {
-  width: 380px;
+  /* 桌面 380px；手机端用 min(380px, 92vw) 自适应居中不溢出（AC-9） */
+  width: min(380px, 92vw);
   padding: 12px 8px;
 }
 .auth-brand {

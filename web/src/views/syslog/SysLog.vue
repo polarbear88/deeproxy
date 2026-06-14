@@ -178,6 +178,8 @@ onBeforeUnmount(closeStream)
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/responsive.scss' as r;
+
 .log-tabs {
   :deep(.el-tabs__header) {
     margin: 0;
@@ -185,10 +187,19 @@ onBeforeUnmount(closeStream)
 }
 .toolbar {
   gap: 12px;
+  // 手机端：工具条（实时标签/级别选择/自动滚动/清空）允许换行，避免与 tabs 同行挤爆
+  @include r.mobile {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
 }
 .log-box {
   height: calc(100vh - 200px);
   overflow-y: auto;
+  // 终端风格横向滚动：父级 layout-main 在手机端 overflow-x:hidden，
+  // 日志框需自己横滚，否则 flex 行会被压缩、log-msg(break-all) 退化成逐字竖排。
+  overflow-x: auto;
   background: var(--el-fill-color-darker);
   border-radius: 6px;
   padding: 10px 12px;
@@ -201,6 +212,8 @@ onBeforeUnmount(closeStream)
   align-items: baseline;
   gap: 8px;
   white-space: nowrap;
+  // 每行保持其内容宽度，不被日志框宽度压缩（配合 log-box overflow-x:auto 横滚查看）
+  min-width: max-content;
 }
 .log-time {
   color: var(--el-text-color-secondary);

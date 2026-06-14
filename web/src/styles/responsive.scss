@@ -1,0 +1,24 @@
+// 响应式断点的单一真相源（SCSS 侧）。
+//
+// 为什么要单独成文件：各组件 <style scoped lang="scss"> 是独立编译单元，
+// 无法共享 index.scss 里定义的变量/mixin。把断点常量与 mobile mixin 放在这里，
+// 各组件用 `@use '@/styles/responsive.scss' as r;` 引入后即可 `@include r.mobile { ... }`，
+// 避免在每个组件里重复硬编码 768px 媒体查询（DRY）。
+//
+// 注意：768px 这个数值在 JS 侧（stores/app.js 的 MOBILE_MAX）也有一份，
+// 因为 SCSS 编译期与 JS 运行期彼此隔离，无法做到字面意义的单一真相源。
+// 两处各自只定义一次，并互相注释指向对方，改断点时两处一起改。
+
+// 手机/桌面分界：<768px 视为手机。用 767.98px 而非 768px 是为了与
+// JS 侧 matchMedia '(max-width: 767.98px)' 精确对齐，避免恰好 768px 时
+// CSS 与 JS 判定不一致（边界撕裂）。
+$dp-mobile-max: 767.98px;
+
+// 手机端样式 mixin：包裹「纯外观」样式（padding/gap/flex-wrap/字号/overflow 等）。
+// 结构性决策（显隐、条件渲染、抽屉开关）一律走 JS isMobile，不要用这里的 display:none，
+// 否则会与 JS 判定形成两套真相源、在断点边界产生状态撕裂。
+@mixin mobile {
+  @media (max-width: $dp-mobile-max) {
+    @content;
+  }
+}

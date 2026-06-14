@@ -8,9 +8,12 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as ruleApi from '@/api/rule'
 import * as groupApi from '@/api/group'
+import { useAppStore } from '@/stores/app'
 
 // i18n：仅展示层翻译，数据层（match/action 等）始终保持原始英文值（API/DB 不污染）
 const { t } = useI18n()
+// 应用 store：读 isMobile 控制规则抽屉在手机端的宽度
+const appStore = useAppStore()
 
 const loading = ref(false)
 const ruleGroups = ref([])
@@ -304,7 +307,7 @@ onMounted(loadAll)
     </el-dialog>
 
     <!-- 规则抽屉 -->
-    <el-drawer v-model="ruleDrawer.visible" :title="t('rules.drawerTitle', { name: ruleDrawer.rg?.name || '' })" size="55%">
+    <el-drawer v-model="ruleDrawer.visible" :title="t('rules.drawerTitle', { name: ruleDrawer.rg?.name || '' })" :size="appStore.isMobile ? '90%' : '55%'">
       <div class="flex-between drawer-toolbar">
         <span class="text-muted">{{ t('rules.orderHint') }}</span>
         <div class="flex-row" style="gap: 8px">

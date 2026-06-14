@@ -29,6 +29,14 @@ const activeMenu = computed(() => route.name)
 
 function go(name) {
   if (name !== route.name) router.push({ name })
+  // 移动端：选中菜单后关闭导航抽屉（桌面端 mobileDrawer 不使用，调用无副作用）
+  appStore.closeDrawer()
+}
+
+// 顶栏汉堡按钮：桌面端切换边栏折叠（原行为）；移动端打开导航抽屉。
+function onHamburger() {
+  if (appStore.isMobile) appStore.openDrawer()
+  else appStore.toggleSidebar()
 }
 
 async function handleLogout() {
@@ -44,8 +52,9 @@ async function handleLogout() {
 
 <template>
   <el-container class="layout-root">
-    <!-- 左侧菜单 -->
+    <!-- 左侧菜单：桌面端常驻；移动端隐藏（改用顶栏汉堡 + 抽屉），结构决策走 isMobile 真相源 -->
     <el-aside
+      v-show="!appStore.isMobile"
       class="layout-aside"
       :width="appStore.sidebarCollapsed ? 'var(--dp-aside-width-collapsed)' : 'var(--dp-aside-width)'"
     >
@@ -67,11 +76,34 @@ async function handleLogout() {
       </el-menu>
     </el-aside>
 
+    <!-- 移动端导航抽屉：从左侧滑出，复用同一套菜单项；选中后自动关闭（见 go()）。
+         菜单用 inline v-for 各写一份（与上方 aside 重复），刻意不抽子组件——
+         避免 props/emit 契约带来的额外复杂度；两处 el-menu 各自独立维护 active，
+         均绑定同一响应式 activeMenu，随路由同步高亮，无双激活冲突。 -->
+    <el-drawer
+      v-model="appStore.mobileDrawer"
+      direction="ltr"
+      :with-header="false"
+      size="220px"
+      class="mobile-nav-drawer"
+    >
+      <div class="logo">
+        <img src="/favicon.svg" alt="logo" class="logo-img" />
+        <span class="logo-text">deeproxy</span>
+      </div>
+      <el-menu :default-active="activeMenu" class="layout-menu" @select="go">
+        <el-menu-item v-for="r in menuRoutes" :key="r.name" :index="r.name">
+          <el-icon><component :is="r.meta.icon" /></el-icon>
+          <template #title>{{ t(r.meta.title) }}</template>
+        </el-menu-item>
+      </el-menu>
+    </el-drawer>
+
     <el-container>
       <!-- 顶栏 -->
       <el-header class="layout-header">
         <div class="flex-row">
-          <el-icon class="collapse-btn" @click="appStore.toggleSidebar">
+          <el-icon class="collapse-btn" @click="onHamburger">
             <Fold v-if="!appStore.sidebarCollapsed" />
             <Expand v-else />
           </el-icon>
@@ -97,7 +129,7 @@ async function handleLogout() {
                   <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
                 </svg>
               </el-icon>
-              <span class="lang-label">{{ langStore.locale === 'zh' ? '中文' : 'English' }}</span>
+              <span v-show="!appStore.isMobile" class="lang-label">{{ langStore.locale === 'zh' ? '中文' : 'English' }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
@@ -111,7 +143,7 @@ async function handleLogout() {
           <el-dropdown @command="(c) => c === 'logout' && handleLogout()">
             <span class="admin-trigger">
               <el-icon><Avatar /></el-icon>
-              <span class="admin-name">{{ userStore.username || t('common.admin') }}</span>
+              <span v-show="!appStore.isMobile" class="admin-name">{{ userStore.username || t('common.admin') }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
@@ -137,6 +169,9 @@ async function handleLogout() {
 </template>
 
 <style scoped lang="scss">
+// 引入响应式断点 mixin（@use 别名解析的冒烟点：本仓库首个在 scoped block 用 @use 的组件）
+@use '@/styles/responsive.scss' as r;
+
 .layout-root {
   height: 100vh;
 }
@@ -179,6 +214,10 @@ async function handleLogout() {
   background-color: var(--el-bg-color);
   border-bottom: 1px solid var(--el-border-color-light);
   padding: 0 16px;
+  // 手机端：减小左右内边距释放横向空间
+  @include r.mobile {
+    padding: 0 10px;
+  }
 
   .collapse-btn,
   .theme-btn {
@@ -196,6 +235,10 @@ async function handleLogout() {
   }
   .header-right {
     gap: 18px;
+    // 手机端：缩小间距，配合文字隐藏（v-show）让图标更紧凑、不溢出
+    @include r.mobile {
+      gap: 8px;
+    }
   }
   .admin-trigger {
     display: flex;
@@ -228,5 +271,17 @@ async function handleLogout() {
   background-color: var(--dp-content-bg);
   padding: 0;
   overflow-y: auto;
+  // 手机端：内容区禁止横向溢出，把宽表格等内容的横向滚动收敛到各自容器内部，
+  // 避免整个页面被撑出横向滚动条（AC-6 关键）。
+  @include r.mobile {
+    overflow-x: hidden;
+  }
+}
+
+// 移动端导航抽屉内部：去掉 el-drawer 默认 padding，让 logo 与菜单贴合边缘（与桌面 aside 观感一致）
+.mobile-nav-drawer {
+  :deep(.el-drawer__body) {
+    padding: 0;
+  }
 }
 </style>
