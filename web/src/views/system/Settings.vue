@@ -10,7 +10,7 @@ import { useI18n } from 'vue-i18n'
 import * as sysApi from '@/api/system'
 import { useUserStore } from '@/stores/user'
 
-// i18n：组件④设置小卡片标题与字段标签经 t() 翻译
+// i18n：组件④设置卡片标题与字段标签经 t() 翻译
 const { t } = useI18n()
 const router = useRouter()
 const userStore = useUserStore()
@@ -152,118 +152,94 @@ onMounted(loadSettings)
 
 <template>
   <div class="dp-page">
+    <!-- 卡片①：系统设置（全宽一整张）。内部用 el-divider 做分区：服务器与连接 / 运行期 / 统计 / 健康检查默认值。
+         字段与 saveSettings() 载荷一一对应，未删任何字段；script 不动，仅模板由「4 张并排小卡」改为「单卡分区」。 -->
+    <el-card v-loading="loading" class="dp-card-gap">
+      <template #header><span>{{ t('menu.system') }}</span></template>
+      <el-form label-width="150px">
+        <!-- 分区：服务器与连接 -->
+        <el-divider content-position="left">{{ t('settings.serverConn') }}</el-divider>
+        <el-form-item :label="t('settings.adminAccount')">
+          <el-input v-model="settings.adminUser" disabled style="max-width: 320px" />
+        </el-form-item>
+        <el-form-item :label="t('settings.serverAddr')">
+          <el-input v-model="settings.serverAddr" :placeholder="t('settings.serverAddrPlaceholder')" style="max-width: 320px" />
+          <span class="text-muted hint">{{ t('settings.serverAddrHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('settings.probePoolSize')">
+          <el-input-number v-model="settings.probePoolSize" :min="1" :max="10000" />
+          <span class="text-muted hint">{{ t('settings.probePoolSizeHint') }}</span>
+        </el-form-item>
+
+        <!-- 分区：运行期设置 -->
+        <el-divider content-position="left">{{ t('settings.runtime') }}</el-divider>
+        <el-form-item :label="t('settings.defaultAction')">
+          <el-select v-model="settings.defaultAction" style="width: 160px">
+            <el-option :label="t('settings.actionForwardOpt')" value="forward" />
+            <el-option :label="t('settings.actionDirectOpt')" value="direct" />
+            <el-option :label="t('settings.actionRejectOpt')" value="reject" />
+          </el-select>
+          <span class="text-muted hint">{{ t('settings.defaultActionHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('settings.logLevel')">
+          <el-select v-model="settings.logLevel" style="width: 160px">
+            <el-option label="debug" value="debug" />
+            <el-option label="info" value="info" />
+            <el-option label="warn" value="warn" />
+            <el-option label="error" value="error" />
+          </el-select>
+          <span class="text-muted hint">{{ t('settings.logLevelHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('settings.idleTimeout')">
+          <el-input-number v-model="settings.idleTimeoutSec" :min="1" :max="86400" />
+          <span class="text-muted hint">{{ t('settings.idleTimeoutHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('settings.sniffDomain')">
+          <el-switch v-model="settings.sniffDomain" />
+          <span class="text-muted hint">{{ t('settings.sniffDomainHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('settings.sniffTimeout')">
+          <el-input-number v-model="settings.sniffTimeoutMs" :min="1" :max="60000" :step="50" />
+          <span class="text-muted hint">{{ t('settings.sniffTimeoutHint') }}</span>
+        </el-form-item>
+
+        <!-- 分区：统计 -->
+        <el-divider content-position="left">{{ t('settings.stat') }}</el-divider>
+        <el-form-item :label="t('settings.statRetention')">
+          <el-input-number v-model="settings.statRetentionDays" :min="1" :max="3650" />
+          <span class="text-muted hint">{{ t('settings.statRetentionHint') }}</span>
+        </el-form-item>
+
+        <!-- 分区：健康检查默认值 -->
+        <el-divider content-position="left">{{ t('settings.hcDefaults') }}</el-divider>
+        <el-form-item :label="t('settings.hcMode')">
+          <el-radio-group v-model="settings.hcDefaults.mode">
+            <el-radio value="ping">{{ t('settings.hcModePing') }}</el-radio>
+            <el-radio value="url">{{ t('settings.hcModeUrl') }}</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="settings.hcDefaults.mode === 'url'" :label="t('settings.hcUrl')">
+          <el-input v-model="settings.hcDefaults.url" style="max-width: 420px" />
+        </el-form-item>
+        <el-form-item :label="t('settings.hcInterval')">
+          <el-input-number v-model="settings.hcDefaults.intervalSec" :min="10" :step="10" />
+        </el-form-item>
+        <el-form-item :label="t('settings.hcFailThreshold')">
+          <el-input-number v-model="settings.hcDefaults.failThreshold" :min="1" />
+        </el-form-item>
+        <el-form-item :label="t('settings.hcRecoverThreshold')">
+          <el-input-number v-model="settings.hcDefaults.recoverThreshold" :min="1" />
+        </el-form-item>
+
+        <el-divider />
+        <el-form-item>
+          <el-button type="primary" @click="saveSettings">{{ t('settings.saveSettings') }}</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- 下方一行两列：左「修改密码」，右「配置导入导出」 -->
     <el-row :gutter="16">
-      <el-col :xs="24" :lg="12">
-        <!-- 组件④：原单张「运行期与默认值设置」大卡拆为多张并排小卡（el-row :gutter + el-col :span=12 两列并排）。
-             字段与 saveSettings() 载荷一一对应，未删任何字段；script 不动，仅模板重组。 -->
-        <el-row v-loading="loading" :gutter="16">
-          <!-- 卡A：服务器与连接（管理员账号只读 + serverAddr + probePoolSize）-->
-          <el-col :span="12">
-            <el-card class="dp-card-gap">
-              <template #header><span>{{ t('settings.serverConn') }}</span></template>
-              <el-form label-width="130px">
-                <el-form-item :label="t('settings.adminAccount')">
-                  <el-input v-model="settings.adminUser" disabled />
-                </el-form-item>
-                <el-form-item :label="t('settings.serverAddr')">
-                  <el-input v-model="settings.serverAddr" :placeholder="t('settings.serverAddrPlaceholder')" />
-                  <span class="text-muted hint">{{ t('settings.serverAddrHint') }}</span>
-                </el-form-item>
-                <el-form-item :label="t('settings.probePoolSize')">
-                  <el-input-number v-model="settings.probePoolSize" :min="1" :max="10000" />
-                  <span class="text-muted hint">{{ t('settings.probePoolSizeHint') }}</span>
-                </el-form-item>
-              </el-form>
-            </el-card>
-          </el-col>
-
-          <!-- 卡B：运行期设置（defaultAction/logLevel/idleTimeoutSec/sniffDomain/sniffTimeoutMs）-->
-          <el-col :span="12">
-            <el-card class="dp-card-gap">
-              <template #header><span>{{ t('settings.runtime') }}</span></template>
-              <el-form label-width="130px">
-                <el-form-item :label="t('settings.defaultAction')">
-                  <el-select v-model="settings.defaultAction" style="width: 160px">
-                    <el-option :label="t('settings.actionForwardOpt')" value="forward" />
-                    <el-option :label="t('settings.actionDirectOpt')" value="direct" />
-                    <el-option :label="t('settings.actionRejectOpt')" value="reject" />
-                  </el-select>
-                  <span class="text-muted hint">{{ t('settings.defaultActionHint') }}</span>
-                </el-form-item>
-                <el-form-item :label="t('settings.logLevel')">
-                  <el-select v-model="settings.logLevel" style="width: 160px">
-                    <el-option label="debug" value="debug" />
-                    <el-option label="info" value="info" />
-                    <el-option label="warn" value="warn" />
-                    <el-option label="error" value="error" />
-                  </el-select>
-                  <span class="text-muted hint">{{ t('settings.logLevelHint') }}</span>
-                </el-form-item>
-                <el-form-item :label="t('settings.idleTimeout')">
-                  <el-input-number v-model="settings.idleTimeoutSec" :min="1" :max="86400" />
-                  <span class="text-muted hint">{{ t('settings.idleTimeoutHint') }}</span>
-                </el-form-item>
-                <el-form-item :label="t('settings.sniffDomain')">
-                  <el-switch v-model="settings.sniffDomain" />
-                  <span class="text-muted hint">{{ t('settings.sniffDomainHint') }}</span>
-                </el-form-item>
-                <el-form-item :label="t('settings.sniffTimeout')">
-                  <el-input-number v-model="settings.sniffTimeoutMs" :min="1" :max="60000" :step="50" />
-                  <span class="text-muted hint">{{ t('settings.sniffTimeoutHint') }}</span>
-                </el-form-item>
-              </el-form>
-            </el-card>
-          </el-col>
-
-          <!-- 卡C：统计（statRetentionDays）-->
-          <el-col :span="12">
-            <el-card class="dp-card-gap">
-              <template #header><span>{{ t('settings.stat') }}</span></template>
-              <el-form label-width="130px">
-                <el-form-item :label="t('settings.statRetention')">
-                  <el-input-number v-model="settings.statRetentionDays" :min="1" :max="3650" />
-                  <span class="text-muted hint">{{ t('settings.statRetentionHint') }}</span>
-                </el-form-item>
-              </el-form>
-            </el-card>
-          </el-col>
-
-          <!-- 卡D：健康检查默认值（hcDefaults.*）-->
-          <el-col :span="12">
-            <el-card class="dp-card-gap">
-              <template #header><span>{{ t('settings.hcDefaults') }}</span></template>
-              <el-form label-width="130px">
-                <el-form-item :label="t('settings.hcMode')">
-                  <el-radio-group v-model="settings.hcDefaults.mode">
-                    <el-radio value="ping">{{ t('settings.hcModePing') }}</el-radio>
-                    <el-radio value="url">{{ t('settings.hcModeUrl') }}</el-radio>
-                  </el-radio-group>
-                </el-form-item>
-                <el-form-item v-if="settings.hcDefaults.mode === 'url'" :label="t('settings.hcUrl')">
-                  <el-input v-model="settings.hcDefaults.url" />
-                </el-form-item>
-                <el-form-item :label="t('settings.hcInterval')">
-                  <el-input-number v-model="settings.hcDefaults.intervalSec" :min="10" :step="10" />
-                </el-form-item>
-                <el-form-item :label="t('settings.hcFailThreshold')">
-                  <el-input-number v-model="settings.hcDefaults.failThreshold" :min="1" />
-                </el-form-item>
-                <el-form-item :label="t('settings.hcRecoverThreshold')">
-                  <el-input-number v-model="settings.hcDefaults.recoverThreshold" :min="1" />
-                </el-form-item>
-              </el-form>
-            </el-card>
-          </el-col>
-
-          <!-- 保存按钮：放卡片组底部一处，仍调用同一 saveSettings()，载荷不变 -->
-          <el-col :span="24">
-            <el-card class="dp-card-gap">
-              <el-button type="primary" @click="saveSettings">{{ t('settings.saveSettings') }}</el-button>
-            </el-card>
-          </el-col>
-        </el-row>
-      </el-col>
-
       <el-col :xs="24" :lg="12">
         <el-card class="dp-card-gap">
           <template #header><span>{{ t('settings.adminPassword') }}</span></template>
@@ -283,8 +259,10 @@ onMounted(loadSettings)
             </el-form-item>
           </el-form>
         </el-card>
+      </el-col>
 
-        <el-card>
+      <el-col :xs="24" :lg="12">
+        <el-card class="dp-card-gap">
           <template #header><span>{{ t('settings.importExport') }}</span></template>
           <div class="ie-row">
             <el-button :icon="'Download'" @click="exportConfig">{{ t('settings.exportConfig') }}</el-button>

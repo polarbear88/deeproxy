@@ -258,6 +258,13 @@ export default {
     enterTargetWarn: '请输入域名或 IP',
     selectGroupWarn: '请选择分组',
     enterMatchValueWarn: '请输入匹配值',
+    exportRules: '导出',
+    importRules: '导入',
+    exported: '规则已导出',
+    importInvalidJson: '文件不是合法的 JSON',
+    importNoRules: '文件中没有可导入的规则',
+    importConfirm: '确认导入 {count} 条规则到当前规则组？',
+    importDone: '导入完成：成功 {ok} 条，失败 {failed} 条',
   },
   // 代理组页专有文案（组件③⑤，AC-2.5 全量）
   proxyGroups: {

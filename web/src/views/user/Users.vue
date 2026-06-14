@@ -179,6 +179,14 @@ async function copyProxyAddr(row) {
   }
 }
 
+// 操作列下拉菜单的命令分发：把原先并排的多个按钮收敛为单一下拉入口。
+function onAction(cmd, row) {
+  if (cmd === 'auth') openAuth(row)
+  else if (cmd === 'copy') copyProxyAddr(row)
+  else if (cmd === 'edit') openEdit(row)
+  else if (cmd === 'delete') remove(row)
+}
+
 onMounted(() => {
   loadAll()
   loadProxyContext()
@@ -204,12 +212,24 @@ onMounted(() => {
             <span v-if="!row.allGroups && groupNames(row.groupIds).length === 0" class="text-muted">{{ t('users.notAuthed') }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('common.actions')" width="300" fixed="right">
+        <el-table-column :label="t('common.actions')" width="120" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openAuth(row)">{{ t('users.setAuth') }}</el-button>
-            <el-button link type="primary" @click="copyProxyAddr(row)">{{ t('users.copyProxyAddr') }}</el-button>
-            <el-button link type="primary" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
-            <el-button link type="danger" @click="remove(row)">{{ t('common.delete') }}</el-button>
+            <!-- 操作按钮收进下拉菜单，避免操作列过于杂乱 -->
+            <el-dropdown @command="(cmd) => onAction(cmd, row)">
+              <el-button link type="primary">
+                {{ t('common.actions') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="auth">{{ t('users.setAuth') }}</el-dropdown-item>
+                  <el-dropdown-item command="copy">{{ t('users.copyProxyAddr') }}</el-dropdown-item>
+                  <el-dropdown-item command="edit">{{ t('common.edit') }}</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>
+                    <span style="color: var(--el-color-danger)">{{ t('common.delete') }}</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

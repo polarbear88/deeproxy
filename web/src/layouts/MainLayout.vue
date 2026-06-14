@@ -88,7 +88,7 @@ async function handleLogout() {
           <!-- 中/英语言切换：放在主题按钮与管理员下拉之间，风格与下拉一致 -->
           <el-dropdown @command="(c) => langStore.setLocale(c)">
             <span class="lang-trigger">
-              <el-icon><Operation /></el-icon>
+              <el-icon><MapLocation /></el-icon>
               <span class="lang-label">{{ langStore.locale === 'zh' ? '中文' : 'English' }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>

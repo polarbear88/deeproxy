@@ -134,6 +134,75 @@ async function removeRule(row) {
   }
 }
 
+// ===== 规则导入 / 导出（规则组维度，抽屉内操作）=====
+// 导出：把当前规则组的规则列表（match/action/order，剔除 id 等内部字段）下载为 JSON 文件。
+async function exportRules() {
+  const rg = ruleDrawer.rg
+  if (!rg) return
+  // 仅导出与业务相关的字段，保持与导入格式对称；schemaVersion 便于未来兼容演进。
+  const rules = (ruleDrawer.list || []).map((r) => ({ match: r.match, action: r.action, order: r.order }))
+  const payload = { schemaVersion: 1, ruleGroup: rg.name, rules }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `deeproxy-rules-${rg.name}-${Date.now()}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(t('rules.exported'))
+}
+
+// 导入：读取 JSON 文件，逐条 createRule 到当前规则组，最后汇报成功/失败条数。
+const importingRules = ref(false)
+function onImportRules(uploadFile) {
+  const rg = ruleDrawer.rg
+  if (!rg) return false
+  const file = uploadFile.raw || uploadFile
+  const reader = new FileReader()
+  reader.onload = async () => {
+    let parsed
+    try {
+      parsed = JSON.parse(reader.result)
+    } catch {
+      ElMessage.error(t('rules.importInvalidJson'))
+      return
+    }
+    // 兼容两种格式：{rules:[...]} 包装，或裸数组 [...]。
+    const list = Array.isArray(parsed) ? parsed : parsed.rules
+    if (!Array.isArray(list) || list.length === 0) {
+      ElMessage.error(t('rules.importNoRules'))
+      return
+    }
+    await ElMessageBox.confirm(t('rules.importConfirm', { count: list.length }), t('common.notice'), {
+      type: 'warning',
+    }).catch(() => Promise.reject())
+    importingRules.value = true
+    let ok = 0
+    let failed = 0
+    try {
+      // 逐条创建：单条非法（缺 match/action）跳过并计入失败，不中断整体导入。
+      for (const r of list) {
+        if (!r || !r.match || !r.action) {
+          failed++
+          continue
+        }
+        try {
+          await ruleApi.createRule(rg.id, { match: r.match, action: r.action, order: r.order ?? 0 })
+          ok++
+        } catch {
+          failed++
+        }
+      }
+      ElMessage.success(t('rules.importDone', { ok, failed }))
+      loadRules(rg.id)
+    } finally {
+      importingRules.value = false
+    }
+  }
+  reader.readAsText(file)
+  return false
+}
+
 // ===== 规则测试器（AC-39，传 groupId）=====
 const tester = reactive({ visible: false, target: '', groupId: null, result: null })
 function openTester() {
@@ -238,7 +307,13 @@ onMounted(loadAll)
     <el-drawer v-model="ruleDrawer.visible" :title="t('rules.drawerTitle', { name: ruleDrawer.rg?.name || '' })" size="55%">
       <div class="flex-between drawer-toolbar">
         <span class="text-muted">{{ t('rules.orderHint') }}</span>
-        <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateRule">{{ t('rules.addRule') }}</el-button>
+        <div class="flex-row" style="gap: 8px">
+          <el-button size="small" :icon="'Download'" @click="exportRules">{{ t('rules.exportRules') }}</el-button>
+          <el-upload :show-file-list="false" :before-upload="onImportRules" accept=".json">
+            <el-button size="small" :icon="'Upload'" :loading="importingRules">{{ t('rules.importRules') }}</el-button>
+          </el-upload>
+          <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateRule">{{ t('rules.addRule') }}</el-button>
+        </div>
       </div>
       <el-table :data="ruleDrawer.list" border size="small" :empty-text="t('rules.emptyRules')">
         <el-table-column prop="order" :label="t('rules.order')" width="70" />

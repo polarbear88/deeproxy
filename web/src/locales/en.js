@@ -255,6 +255,13 @@ export default {
     enterTargetWarn: 'Please enter a domain or IP',
     selectGroupWarn: 'Please select a group',
     enterMatchValueWarn: 'Please enter a match value',
+    exportRules: 'Export',
+    importRules: 'Import',
+    exported: 'Rules exported',
+    importInvalidJson: 'File is not valid JSON',
+    importNoRules: 'No importable rules in the file',
+    importConfirm: 'Import {count} rule(s) into the current rule group?',
+    importDone: 'Import done: {ok} succeeded, {failed} failed',
   },
   // Proxy groups page text (components ③⑤, full AC-2.5)
   proxyGroups: {
