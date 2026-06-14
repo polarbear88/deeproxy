@@ -13,6 +13,7 @@ import (
 	"golang.org/x/net/proxy"
 	"golang.org/x/sync/semaphore"
 
+	"deeproxy/auth"
 	"deeproxy/store"
 )
 
@@ -39,9 +40,9 @@ const defaultProbePoolSize = 150
 
 // ProbeResult 是一次探测的结果（供 TestProxy 立即探测 AC-38 返回）。
 type ProbeResult struct {
-	OK        bool          // 是否连通
-	Latency   time.Duration // 探测耗时
-	Err       string        // 失败原因（OK=false 时）
+	OK      bool          // 是否连通
+	Latency time.Duration // 探测耗时
+	Err     string        // 失败原因（OK=false 时）
 }
 
 // Prober 抽象单条上游的探测，便于测试注入 mock。
@@ -76,9 +77,11 @@ func (netProber) Probe(ctx context.Context, up store.UpstreamProxy, mode store.H
 	if probeURL == "" {
 		probeURL = defaultProbeURL
 	}
+	// 用户名本身即模板：服务端主动探测无客户端变量，对 {var} 做空值填充（缺值补空）后认证。
+	probeUser := auth.SubstituteTemplate(up.User, nil)
 	var pAuth *proxy.Auth
-	if up.User != "" {
-		pAuth = &proxy.Auth{User: up.User, Password: up.Pwd}
+	if probeUser != "" {
+		pAuth = &proxy.Auth{User: probeUser, Password: up.Pwd}
 	}
 	dialer, err := proxy.SOCKS5("tcp", upAddr, pAuth, proxy.Direct)
 	if err != nil {
@@ -405,9 +408,108 @@ func (h *HealthChecker) LatencyMs(id int64) int64 {
 	return 0
 }
 
-// TestProxy 立即对单条上游发起一次探测并返回结果（AC-38），不影响周期判定计数。
-func (h *HealthChecker) TestProxy(ctx context.Context, u store.UpstreamProxy, mode store.HealthMode, probeURL string) ProbeResult {
-	return h.prober.Probe(ctx, u, mode, probeURL)
+// TestProxy 立即对单条上游发起一次探测并返回结果（AC-38）。
+//
+// 与周期判定不同：手动测试本质即一次探测，结果立即生效——把测得延迟与健康状态直接写回内存态，
+// 健康状态有变化时同步落库，使前端列表刷新后立即看到新延迟与健康标记（不走连续阈值计数）。
+// 返回值 flipped 表示本次测试是否翻转了健康状态，供调用方决定是否需要重建路由快照（未翻转则无需重建）。
+func (h *HealthChecker) TestProxy(ctx context.Context, u store.UpstreamProxy, mode store.HealthMode, probeURL string) (ProbeResult, bool) {
+	res := h.prober.Probe(ctx, u, mode, probeURL)
+	flipped := h.applyImmediate(u, res)
+	return res, flipped
+}
+
+// applyImmediate 把一次探测结果【立即生效】地写回内存态（延迟+健康），健康翻转时落库。返回健康是否翻转。
+//
+// 用于手动测试与「新增即检查」：这两种场景都期望单次探测结果立刻反映，单次即翻转、不经周期判定的
+// 连续阈值计数；为避免污染周期判定的抗抖动窗口，本方法【不修改】consecutiveOK/Fail 计数，
+// 只更新 healthy 与 latencyMs。落库失败回滚内存态，保持「内存态 = DB 态」不变式（同 applyResult）。
+func (h *HealthChecker) applyImmediate(u store.UpstreamProxy, res ProbeResult) bool {
+	h.mu.Lock()
+	st := h.states[u.ID]
+	if st == nil {
+		st = &nodeState{healthy: u.HealthState}
+		h.states[u.ID] = st
+	}
+	prevHealthy := st.healthy
+	if res.OK {
+		st.latencyMs = res.Latency.Milliseconds() // 成功：写回本次延迟供列表展示
+	}
+	// 单次即翻转，不动周期判定的连续计数窗口（与 applyResult 的阈值计数互不干扰）。
+	st.healthy = res.OK
+	newHealthy := st.healthy
+	h.mu.Unlock()
+
+	if newHealthy == prevHealthy {
+		return false
+	}
+	if err := h.store.UpdateUpstreamHealth(u.ID, newHealthy); err != nil {
+		h.mu.Lock()
+		if cur := h.states[u.ID]; cur != nil && cur.healthy == newHealthy {
+			cur.healthy = prevHealthy
+		}
+		h.mu.Unlock()
+		h.logger.Warn("即时探测后更新上游健康状态失败，已回滚内存态",
+			"upstreamID", u.ID, "host", u.Host, "port", u.Port, "err", err)
+		return false // 落库失败视为未翻转，避免上层据此重建快照（DB 仍是旧值）
+	}
+	return true
+}
+
+// CheckNow 对指定上游【异步并发探测】一次（新增代理后调用，AC-10..AC-12）。
+//
+// 设计要点：
+//   - 异步——立即返回，不阻塞新增请求路径（探测单条最长 defaultProbeTimeout，批量更久）；
+//     探测在后台 goroutine 进行，与周期检查走同一套「翻转→落库→Refresh 刷新快照」通道。
+//   - 自含——内部用独立的 context.Background 派生 ctx（含整体超时），不依赖调用方请求 ctx，
+//     避免请求结束后 ctx 被 cancel 导致探测半途夭折。
+//   - 仅当分组开启健康检查（HCEnabled 且未被运行期手动停掉）时才探测；被手动禁用（!Enabled）的上游跳过。
+//   - 复用全局探测信号量限流；本批有任一健康翻转才 Refresh 一次（避免无谓全量重建）。
+func (h *HealthChecker) CheckNow(g store.Group, ups []store.UpstreamProxy) {
+	if !g.HCEnabled || h.isGroupDisabled(g.ID) || len(ups) == 0 {
+		return
+	}
+	go func() {
+		// 独立 ctx：不挂请求 ctx，整体设较宽超时覆盖批量并发探测。
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		sem := semaphore.NewWeighted(int64(h.readProbePoolSize()))
+		var (
+			wg      sync.WaitGroup
+			aggMu   sync.Mutex
+			changed bool
+		)
+		for _, u := range ups {
+			if !u.Enabled {
+				continue
+			}
+			if err := sem.Acquire(ctx, 1); err != nil {
+				break // ctx 取消/超时时停止发起新探测
+			}
+			wg.Add(1)
+			go func(u store.UpstreamProxy) {
+				defer wg.Done()
+				defer sem.Release(1)
+				pctx, pcancel := context.WithTimeout(ctx, defaultProbeTimeout)
+				defer pcancel()
+				res := h.prober.Probe(pctx, u, g.HCMode, g.HCURL)
+				if h.applyImmediate(u, res) {
+					aggMu.Lock()
+					changed = true
+					aggMu.Unlock()
+				}
+			}(u)
+		}
+		wg.Wait()
+
+		// 有任一健康翻转才刷新快照（与 scanOnce 一致的通道）。
+		if changed && h.refresher != nil {
+			if err := h.refresher.Refresh(); err != nil {
+				h.logger.Warn("新增即检查后刷新快照失败", "groupID", g.ID, "err", err)
+			}
+		}
+	}()
 }
 
 // DisableGroup 手动停掉某组的健康检查（AC-18 组级开关）。

@@ -7,7 +7,7 @@ import "testing"
 
 // TestUpstreamTemplateSubstitution 验证 UpstreamView 用命名变量替换模板。
 func TestUpstreamTemplateSubstitution(t *testing.T) {
-	uv := UpstreamView{User: "fallback", UsernameTemplate: "acct-{region}-{session}", Host: "h", Port: 1, Pwd: "p"}
+	uv := UpstreamView{User: "acct-{region}-{session}", Host: "h", Port: 1, Pwd: "p"}
 	got := uv.ToAuthUpstream(map[string]string{"region": "us", "session": "abc"})
 	if got.User != "acct-us-abc" {
 		t.Fatalf("模板替换错误: %q", got.User)
@@ -17,10 +17,10 @@ func TestUpstreamTemplateSubstitution(t *testing.T) {
 	if got2.User != "acct-us-" {
 		t.Fatalf("缺值补空错误: %q", got2.User)
 	}
-	// 无模板用定值 User。
+	// 无占位的 User 原样返回（等价定值）。
 	uv2 := UpstreamView{User: "fixed"}
 	if uv2.ResolveUser(nil) != "fixed" {
-		t.Fatalf("无模板应用定值")
+		t.Fatalf("无占位应原样返回 User")
 	}
 }
 

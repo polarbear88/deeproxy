@@ -98,7 +98,7 @@ func TestGroupAndUpstreamCRUD(t *testing.T) {
 		t.Fatalf("新增分组失败: %v", err)
 	}
 
-	up := &UpstreamProxy{GroupID: g.ID, Host: "1.2.3.4", Port: 1080, UsernameTemplate: "acct-{region}", Weight: 5, Enabled: true, HealthState: true}
+	up := &UpstreamProxy{GroupID: g.ID, Host: "1.2.3.4", Port: 1080, User: "acct-{region}", Weight: 5, Enabled: true, HealthState: true}
 	if err := s.CreateUpstream(up); err != nil {
 		t.Fatalf("新增上游失败: %v", err)
 	}

@@ -1,7 +1,7 @@
 <script setup>
 // 代理组管理（AC-21/28，G2）。已对齐 T7 实测契约（camelCase DTO）：
 // - Group: { id,name,remark,type,healthCheck:{enabled,mode,url,intervalSec,failThreshold,recoverThreshold},todayUp,todayDown,todayReq }
-// - Upstream: { id,host,port,user,usernameTemplate,pwd,weight,enabled,healthState:'healthy'|'unhealthy'|'unknown',latencyMs }
+// - Upstream: { id,host,port,user,pwd,weight,enabled,healthState:'healthy'|'unhealthy'|'unknown',latencyMs }
 // - Type A 隐藏代理池与健康检查 UI（G2）。
 import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -167,7 +167,7 @@ const bulkSelectionLabel = computed(() => {
 
 const upDialog = reactive({ visible: false, isEdit: false, tab: 'single', form: null, batchText: '', submitting: false, result: null })
 function emptyUpstreamForm() {
-  return { id: null, host: '', port: 1080, user: '', usernameTemplate: '', pwd: '', weight: 1, enabled: true }
+  return { id: null, host: '', port: 1080, user: '', pwd: '', weight: 1, enabled: true }
 }
 function openCreateUpstream() {
   upDialog.isEdit = false
@@ -293,6 +293,33 @@ function bulkEnable() {
 function bulkDisable() {
   bulkApply('enabled', false, t('proxyGroups.bulkDisableDone'))
 }
+// 批量删除：复用选择载荷（勾选→ids；跨页全选→filter）。删除不可逆，二次确认显示具体条数。
+async function bulkDelete() {
+  if (!hasBulkSelection.value) return ElMessage.warning(t('proxyGroups.selectUpstreamWarn'))
+  // 条数来源：跨页全选 = 当前筛选下的总数；否则 = 勾选行数。
+  const count = selectAllByFilter.value ? upstreamDrawer.total : selectedRows.value.length
+  const ok = await ElMessageBox.confirm(
+    t('proxyGroups.bulkDeleteConfirm', { n: count }),
+    t('common.notice'),
+    { type: 'warning' },
+  ).catch(() => false)
+  if (!ok) return
+  const gid = upstreamDrawer.group.id
+  // 删除接口契约：{ ids } 或 { filter:{keyword,healthState} }（与 bulk 改值的扁平结构不同）。
+  const payload = selectAllByFilter.value
+    ? { filter: { keyword: upQuery.keyword || undefined, healthState: upQuery.healthState || undefined } }
+    : { ids: selectedRows.value.map((r) => r.id) }
+  try {
+    const r = await groupApi.bulkDeleteUpstreams(gid, payload)
+    ElMessage.success(t('proxyGroups.bulkAffected', { msg: t('proxyGroups.bulkDeleteDone'), n: r?.affected ?? 0 }))
+    selectAllByFilter.value = false
+    selectedRows.value = []
+    upTableRef.value?.clearSelection?.()
+    loadUpstreams()
+  } catch {
+    /* ignore */
+  }
+}
 const testing = ref({})
 async function testUpstream(row) {
   testing.value[row.id] = true
@@ -300,6 +327,8 @@ async function testUpstream(row) {
     const r = await groupApi.testUpstream(upstreamDrawer.group.id, row.id)
     if (r?.ok) ElMessage.success(t('proxyGroups.testOk', { ms: r.latencyMs }))
     else ElMessage.error(t('proxyGroups.testFail', { err: r?.error || t('proxyGroups.unknownError') }))
+    // 测试即一次探测：后端已写回延迟与健康状态，刷新列表使「延迟/健康」列即时更新。
+    loadUpstreams()
   } catch {
     /* ignore */
   } finally {
@@ -505,6 +534,7 @@ onMounted(loadGroups)
           <el-button size="small" :disabled="!hasBulkSelection" @click="bulkSetWeight">{{ t('proxyGroups.bulkSetWeight') }}</el-button>
           <el-button size="small" type="success" :disabled="!hasBulkSelection" @click="bulkEnable">{{ t('proxyGroups.bulkEnable') }}</el-button>
           <el-button size="small" type="warning" :disabled="!hasBulkSelection" @click="bulkDisable">{{ t('proxyGroups.bulkDisable') }}</el-button>
+          <el-button size="small" type="danger" :disabled="!hasBulkSelection" @click="bulkDelete">{{ t('proxyGroups.bulkDelete') }}</el-button>
         </div>
       </div>
 
@@ -521,7 +551,9 @@ onMounted(loadGroups)
         <el-table-column :label="t('proxyGroups.address')" min-width="160">
           <template #default="{ row }">{{ row.host }}:{{ row.port }}</template>
         </el-table-column>
-        <el-table-column prop="usernameTemplate" :label="t('proxyGroups.usernameTemplate')" min-width="160" show-overflow-tooltip />
+        <el-table-column :label="t('proxyGroups.usernamePwd')" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.user }}:{{ row.pwd }}</template>
+        </el-table-column>
         <el-table-column prop="weight" :label="t('common.weight')" width="80" />
         <el-table-column :label="t('proxyGroups.health')" width="100">
           <template #default="{ row }">
@@ -591,8 +623,8 @@ onMounted(loadGroups)
         <el-form-item :label="t('common.port')" required>
           <el-input-number v-model="upDialog.form.port" :min="1" :max="65535" />
         </el-form-item>
-        <el-form-item :label="t('proxyGroups.usernameTemplate')">
-          <el-input v-model="upDialog.form.usernameTemplate" :placeholder="t('proxyGroups.usernameTplPlaceholder')" />
+        <el-form-item :label="t('proxyGroups.username')">
+          <el-input v-model="upDialog.form.user" :placeholder="t('proxyGroups.usernameTplPlaceholder')" />
         </el-form-item>
         <el-form-item :label="t('proxyGroups.upstreamPwd')">
           <el-input v-model="upDialog.form.pwd" type="password" show-password :placeholder="t('proxyGroups.upstreamPwdPlaceholder')" />
@@ -612,8 +644,8 @@ onMounted(loadGroups)
             <el-form-item :label="t('common.port')" required>
               <el-input-number v-model="upDialog.form.port" :min="1" :max="65535" />
             </el-form-item>
-            <el-form-item :label="t('proxyGroups.usernameTemplate')">
-              <el-input v-model="upDialog.form.usernameTemplate" :placeholder="t('proxyGroups.usernameTplPlaceholder')" />
+            <el-form-item :label="t('proxyGroups.username')">
+              <el-input v-model="upDialog.form.user" :placeholder="t('proxyGroups.usernameTplPlaceholder')" />
             </el-form-item>
             <el-form-item :label="t('proxyGroups.upstreamPwd')">
               <el-input v-model="upDialog.form.pwd" type="password" show-password :placeholder="t('proxyGroups.upstreamPwdPlaceholder')" />

@@ -2,7 +2,7 @@
 //
 // 后端为 camelCase DTO：
 //   Group: { id,name,remark,type,healthCheck:{enabled,mode,url,intervalSec,failThreshold,recoverThreshold},todayUp,todayDown,todayReq }
-//   Upstream: { id,host,port,user,usernameTemplate,pwd,weight,enabled,healthState:'healthy'|'unhealthy'|'unknown',latencyMs }
+//   Upstream: { id,host,port,user,pwd,weight,enabled,healthState:'healthy'|'unhealthy'|'unknown',latencyMs }
 import request from './request'
 
 export function listGroups() {
@@ -69,4 +69,10 @@ export function batchAddUpstreams(groupId, lines) {
 // 返回 { affected }。
 export function bulkUpdateUpstreams(groupId, payload) {
   return request.post(`/groups/${groupId}/upstreams/bulk`, payload)
+}
+
+// 批量删除上游。后端契约：请求 { ids:[int64] } 或 { filter:{ keyword?, healthState? } }
+//   ids 非空 → 按 id 列表删除；否则按 filter 删除当前分组匹配项（跨页全选）。返回 { affected }。
+export function bulkDeleteUpstreams(groupId, payload) {
+  return request.post(`/groups/${groupId}/upstreams/bulk-delete`, payload)
 }

@@ -70,9 +70,9 @@ func (s *Store) ImportBundle(b ConfigBundle) error {
 		for _, u := range b.Upstreams {
 			if _, err := tx.Exec(
 				`INSERT INTO upstream_proxy
-				   (id, group_id, host, port, user, username_template, pwd, weight, enabled, health_state, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				u.ID, u.GroupID, u.Host, u.Port, u.User, u.UsernameTemplate, u.Pwd,
+				   (id, group_id, host, port, user, pwd, weight, enabled, health_state, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				u.ID, u.GroupID, u.Host, u.Port, u.User, u.Pwd,
 				u.Weight, boolToInt(u.Enabled), boolToInt(u.HealthState), ts, ts,
 			); err != nil {
 				return fmt.Errorf("导入上游 %d 失败: %w", u.ID, err)

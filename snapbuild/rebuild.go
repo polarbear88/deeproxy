@@ -192,15 +192,14 @@ func Rebuild(st *store.Store, cfg *config.Config) (*snapshot.Snapshot, error) {
 		var allViews, healthyViews []snapshot.UpstreamView
 		for _, u := range upstreamsByGroup[g.ID] {
 			uv := snapshot.UpstreamView{
-				ID:               u.ID,
-				Host:             u.Host,
-				Port:             u.Port,
-				User:             u.User,
-				UsernameTemplate: u.UsernameTemplate,
-				Pwd:              u.Pwd,
-				Weight:           u.Weight,
-				Enabled:          u.Enabled,
-				Healthy:          u.HealthState,
+				ID:      u.ID,
+				Host:    u.Host,
+				Port:    u.Port,
+				User:    u.User,
+				Pwd:     u.Pwd,
+				Weight:  u.Weight,
+				Enabled: u.Enabled,
+				Healthy: u.HealthState,
 			}
 			allViews = append(allViews, uv)
 			if u.Enabled && u.HealthState {

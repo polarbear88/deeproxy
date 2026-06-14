@@ -163,14 +163,17 @@ var schemaStmts = []string{
 		updated_at   TEXT    NOT NULL DEFAULT ''
 	);`,
 
-	// 上游代理：仅属于 Type B 分组；含权重、启停、健康状态、用户名模板。
+	// 上游代理：仅属于 Type B 分组；含权重、启停、健康状态。
+	// user 即用户名（本身可含 {var} 占位，运行期由客户端尾段变量替换；不含占位时为定值）。
+	// 设计决定：早期版本曾有独立 username_template 列，现已统一并入 user 字段。因本项目无存量旧库，
+	// 故【不提供 ALTER TABLE DROP COLUMN 降级迁移】——建表语句直接采用新结构即可；
+	// 若未来出现遗留旧库需清理该死列，再补幂等的 DROP COLUMN 迁移（SQLite 3.35+）。
 	`CREATE TABLE IF NOT EXISTS upstream_proxy (
 		id                INTEGER PRIMARY KEY AUTOINCREMENT,
 		group_id          INTEGER NOT NULL REFERENCES "group"(id) ON DELETE CASCADE,
 		host              TEXT    NOT NULL,
 		port              INTEGER NOT NULL,
 		user              TEXT    NOT NULL DEFAULT '',
-		username_template TEXT    NOT NULL DEFAULT '',
 		pwd               TEXT    NOT NULL DEFAULT '',
 		weight            INTEGER NOT NULL DEFAULT 1,
 		enabled           INTEGER NOT NULL DEFAULT 1,

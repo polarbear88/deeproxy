@@ -77,7 +77,7 @@ func TestTypeBForwardSWRR(t *testing.T) {
 		defAction: "reject",
 		user:      "bob", pwd: "secret",
 		upstreams: []store.UpstreamProxy{
-			{Host: host, Port: port, UsernameTemplate: "acct-{region}", Pwd: "pp", Weight: 1},
+			{Host: host, Port: port, User: "acct-{region}", Pwd: "pp", Weight: 1},
 		},
 	})
 

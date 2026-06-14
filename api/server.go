@@ -44,11 +44,11 @@ type App struct {
 	sessions *sessionStore // 内存会话表（D2-A）
 	limiter  *loginLimiter // 登录失败限流（AC-40）
 
-	logger    *slog.Logger // 日志器（接入 syslog 缓冲，关键写操作埋点 → 系统日志页可见）
+	logger    *slog.Logger   // 日志器（接入 syslog 缓冲，关键写操作埋点 → 系统日志页可见）
 	levelVar  *slog.LevelVar // 日志级别变量：后台改 log_level 时对它 Set 原子热生效（不重启）
-	startedAt time.Time    // 进程启动时间（仪表盘 uptime 计算）
-	rate      *rateSampler // 仪表盘上/下行速率采样器（API 层算差值）
-	version   string       // 构建版本号（由 cmd 注入，仪表盘健康卡片展示）
+	startedAt time.Time      // 进程启动时间（仪表盘 uptime 计算）
+	rate      *rateSampler   // 仪表盘上/下行速率采样器（API 层算差值）
+	version   string         // 构建版本号（由 cmd 注入，仪表盘健康卡片展示）
 }
 
 // NewApp 构建管理后端容器。各依赖由 cmd 装配阶段（阶段9）注入。
@@ -141,8 +141,9 @@ func (a *App) Router() *gin.Engine {
 			// 分组下的上游 CRUD（嵌套路径，Type B）AC-21/28
 			auth.GET("/groups/:id/upstreams", a.handleListUpstreams)
 			auth.POST("/groups/:id/upstreams", a.handleCreateUpstream)
-			auth.POST("/groups/:id/upstreams/batch", a.handleBatchCreateUpstreams)  // 批量添加 AC-3.1
-			auth.POST("/groups/:id/upstreams/bulk", a.handleBulkUpdateUpstreams)    // 批量改权重/启停 AC-3.4
+			auth.POST("/groups/:id/upstreams/batch", a.handleBatchCreateUpstreams)      // 批量添加 AC-3.1
+			auth.POST("/groups/:id/upstreams/bulk", a.handleBulkUpdateUpstreams)        // 批量改权重/启停 AC-3.4
+			auth.POST("/groups/:id/upstreams/bulk-delete", a.handleBulkDeleteUpstreams) // 批量删除上游
 			auth.PUT("/groups/:id/upstreams/:uid", a.handleUpdateUpstream)
 			auth.DELETE("/groups/:id/upstreams/:uid", a.handleDeleteUpstream)
 			auth.POST("/groups/:id/upstreams/:uid/toggle", a.handleSetUpstreamEnabled) // 手动启停 AC-18
@@ -170,7 +171,7 @@ func (a *App) Router() *gin.Engine {
 			// 系统设置 + 改密 + 导入导出 AC-31/37/40
 			auth.GET("/settings", a.handleGetSettings)
 			auth.PUT("/settings", a.handleUpdateSettings)
-			auth.GET("/settings/server-info", a.handleServerInfo) // 监听端口+服务器地址（连接提示 T4.2）
+			auth.GET("/settings/server-info", a.handleServerInfo)              // 监听端口+服务器地址（连接提示 T4.2）
 			auth.POST("/settings/admin-password", a.handleChangeAdminPassword) // 改密(校验旧密码)
 			auth.GET("/settings/export", a.handleExportConfig)
 			auth.POST("/settings/import", a.handleImportConfig)

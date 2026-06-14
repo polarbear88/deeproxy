@@ -230,27 +230,25 @@ func (a *App) handleDeleteGroup(c *gin.Context) {
 
 // upstreamReq 是上游代理创建/更新请求体。
 type upstreamReq struct {
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	User             string `json:"user"`
-	UsernameTemplate string `json:"usernameTemplate"`
-	Pwd              string `json:"pwd"`
-	Weight           int    `json:"weight"`
-	Enabled          bool   `json:"enabled"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	User    string `json:"user"` // 用户名，本身即模板（可含 {var} 占位）
+	Pwd     string `json:"pwd"`
+	Weight  int    `json:"weight"`
+	Enabled bool   `json:"enabled"`
 }
 
 // upstreamResp 是上游响应（healthState 三态字符串 + latencyMs，对齐前端）。
 type upstreamResp struct {
-	ID               int64  `json:"id"`
-	Host             string `json:"host"`
-	Port             int    `json:"port"`
-	User             string `json:"user"`
-	UsernameTemplate string `json:"usernameTemplate"`
-	Pwd              string `json:"pwd"`
-	Weight           int    `json:"weight"`
-	Enabled          bool   `json:"enabled"`
-	HealthState      string `json:"healthState"` // healthy / unhealthy / unknown
-	LatencyMs        int64  `json:"latencyMs"`
+	ID          int64  `json:"id"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	User        string `json:"user"` // 用户名，本身即模板（可含 {var} 占位）
+	Pwd         string `json:"pwd"`
+	Weight      int    `json:"weight"`
+	Enabled     bool   `json:"enabled"`
+	HealthState string `json:"healthState"` // healthy / unhealthy / unknown
+	LatencyMs   int64  `json:"latencyMs"`
 }
 
 // toUpstreamResp 把 store.UpstreamProxy 映射为响应。
@@ -265,16 +263,15 @@ func (a *App) toUpstreamResp(u store.UpstreamProxy) upstreamResp {
 		}
 	}
 	return upstreamResp{
-		ID:               u.ID,
-		Host:             u.Host,
-		Port:             u.Port,
-		User:             u.User,
-		UsernameTemplate: u.UsernameTemplate,
-		Pwd:              u.Pwd,
-		Weight:           u.Weight,
-		Enabled:          u.Enabled,
-		HealthState:      state,
-		LatencyMs:        a.health.LatencyMs(u.ID),
+		ID:          u.ID,
+		Host:        u.Host,
+		Port:        u.Port,
+		User:        u.User,
+		Pwd:         u.Pwd,
+		Weight:      u.Weight,
+		Enabled:     u.Enabled,
+		HealthState: state,
+		LatencyMs:   a.health.LatencyMs(u.ID),
 	}
 }
 
@@ -346,20 +343,21 @@ func (a *App) handleCreateUpstream(c *gin.Context) {
 		req.Weight = 1 // 权重缺省为 1，避免 SWRR 除零/无份额
 	}
 	u := store.UpstreamProxy{
-		GroupID:          gid,
-		Host:             req.Host,
-		Port:             req.Port,
-		User:             req.User,
-		UsernameTemplate: req.UsernameTemplate,
-		Pwd:              req.Pwd,
-		Weight:           req.Weight,
-		Enabled:          req.Enabled,
-		HealthState:      true, // 新增上游初值健康，待健康检查 worker 校正
+		GroupID:     gid,
+		Host:        req.Host,
+		Port:        req.Port,
+		User:        req.User,
+		Pwd:         req.Pwd,
+		Weight:      req.Weight,
+		Enabled:     req.Enabled,
+		HealthState: true, // 新增上游初值健康，待健康检查 worker 校正
 	}
 	if err := a.store.CreateUpstream(&u); err != nil {
 		respondError(c, http.StatusInternalServerError, "新增上游失败: "+err.Error())
 		return
 	}
+	// 新增即检查：分组开启健康检查时异步探测一次，不阻塞响应（AC-10/12）。
+	a.checkUpstreamsNow(gid, []store.UpstreamProxy{u})
 	if !a.rebuildAndSwap(c) {
 		return
 	}
@@ -367,17 +365,32 @@ func (a *App) handleCreateUpstream(c *gin.Context) {
 	respondOK(c, a.toUpstreamResp(u))
 }
 
+// checkUpstreamsNow 对新增上游触发【异步立即健康检查】（AC-10..AC-12）。
+//
+// 读取所属分组配置，仅当分组开启健康检查时交给 health.CheckNow（其内部 goroutine 异步并发探测，
+// 不阻塞新增请求；翻转后自行刷新快照）；分组读取失败或未开启则静默跳过，不阻断新增主流程。
+func (a *App) checkUpstreamsNow(gid int64, ups []store.UpstreamProxy) {
+	if len(ups) == 0 {
+		return
+	}
+	g, err := a.store.GetGroup(gid)
+	if err != nil || g == nil || !g.HCEnabled {
+		return
+	}
+	a.health.CheckNow(*g, ups)
+}
+
 // batchUpstreamReq 是批量添加上游的请求体（AC-3.1/3.2）。
 //
 // 前端最终契约：lines 为字符串数组（每元素一行）。为兼容旧用法仍保留 text（多行文本）：
-// 二者皆可，lines 优先；都为空则无新增。统一默认值（weight/enabled/usernameTemplate）为可选。
+// 二者皆可，lines 优先；都为空则无新增。统一默认值（weight/enabled）为可选。
 type batchUpstreamReq struct {
 	Lines []string `json:"lines"` // 每元素一行待解析的上游（前端最终契约）
 	Text  string   `json:"text"`  // 兼容：多行文本（lines 为空时回退用它）
-	// 以下为可选的统一默认值：批量行通常只含 host:port[+凭据]，权重/模板等用这些默认值统一套用。
-	Weight           int    `json:"weight"`           // 统一权重（<=0 兜底 1）
-	Enabled          *bool  `json:"enabled"`          // 统一启停（nil 默认启用）
-	UsernameTemplate string `json:"usernameTemplate"` // 统一用户名模板（可空）
+	// 以下为可选的统一默认值：批量行通常只含 host:port[+凭据]，权重等用这些默认值统一套用。
+	// 用户名本身即模板，由每行解析得出，无批级模板字段。
+	Weight  int   `json:"weight"`  // 统一权重（<=0 兜底 1）
+	Enabled *bool `json:"enabled"` // 统一启停（nil 默认启用）
 }
 
 // batchUpstreamResp 是批量添加结果（前端最终契约）：ok=成功数，failed=失败明细（行号 + 原因）。
@@ -423,33 +436,36 @@ func (a *App) handleBatchCreateUpstreams(c *gin.Context) {
 	results := parse.ParseLines(source)
 	resp := batchUpstreamResp{Failed: []batchFailureDetail{}}
 	successAny := false
+	created := make([]store.UpstreamProxy, 0, len(results)) // 入库成功的新增项，用于「新增即检查」
 	for _, r := range results {
 		if !r.OK {
 			resp.Failed = append(resp.Failed, batchFailureDetail{Line: r.LineNo, Reason: r.Err})
 			continue
 		}
 		u := store.UpstreamProxy{
-			GroupID:          gid,
-			Host:             r.Up.Host,
-			Port:             r.Up.Port,
-			User:             r.Up.User,
-			UsernameTemplate: req.UsernameTemplate,
-			Pwd:              r.Up.Pwd,
-			Weight:           weight,
-			Enabled:          enabled,
-			HealthState:      true,
+			GroupID:     gid,
+			Host:        r.Up.Host,
+			Port:        r.Up.Port,
+			User:        r.Up.User,
+			Pwd:         r.Up.Pwd,
+			Weight:      weight,
+			Enabled:     enabled,
+			HealthState: true,
 		}
 		if err := a.store.CreateUpstream(&u); err != nil {
 			// 单行入库失败（如外键：分组不存在）也逐行容错累计。
 			resp.Failed = append(resp.Failed, batchFailureDetail{Line: r.LineNo, Reason: err.Error()})
 			continue
 		}
+		created = append(created, u)
 		resp.OK++
 		successAny = true
 	}
 
 	// 有任何成功入库才需重建快照（一次重建覆盖本批全部新增，避免逐条 rebuild）。
 	if successAny {
+		// 新增即检查：分组开启健康检查时异步并发探测本批全部新增项，不阻塞响应（AC-11/12）。
+		a.checkUpstreamsNow(gid, created)
 		if !a.rebuildAndSwap(c) {
 			return
 		}
@@ -482,7 +498,6 @@ func (a *App) handleUpdateUpstream(c *gin.Context) {
 	old.Host = req.Host
 	old.Port = req.Port
 	old.User = req.User
-	old.UsernameTemplate = req.UsernameTemplate
 	old.Pwd = req.Pwd
 	old.Weight = req.Weight
 	old.Enabled = req.Enabled
@@ -544,9 +559,9 @@ func (a *App) handleSetUpstreamEnabled(c *gin.Context) {
 // 选择二选一：ids 非空 → id 列表模式；否则用 filter（按 keyword/healthState 筛当前分组，支持跨页全选）。
 // changes 携带要改的字段（weight / enabled 均为可选指针，可同时改）；至少需一项。
 type bulkUpdateUpstreamsReq struct {
-	IDs     []int64             `json:"ids"`     // id 列表模式：精确选中的上游 id
-	Filter  *bulkFilterDTO      `json:"filter"`  // 筛选模式：keyword/healthState（ids 为空时用）
-	Changes bulkChangesDTO      `json:"changes"` // 要应用的字段变更
+	IDs     []int64        `json:"ids"`     // id 列表模式：精确选中的上游 id
+	Filter  *bulkFilterDTO `json:"filter"`  // 筛选模式：keyword/healthState（ids 为空时用）
+	Changes bulkChangesDTO `json:"changes"` // 要应用的字段变更
 }
 
 // bulkFilterDTO 是筛选模式的条件。
@@ -629,6 +644,59 @@ func (a *App) handleBulkUpdateUpstreams(c *gin.Context) {
 	respondOK(c, gin.H{"affected": affected})
 }
 
+// bulkDeleteUpstreamsReq 是批量删除上游的请求体（镜像 bulkUpdateUpstreamsReq 的选择语义）。
+// 选择二选一：ids 非空 → id 列表模式；否则用 filter（按 keyword/healthState 筛当前分组，支持跨页全选）。
+type bulkDeleteUpstreamsReq struct {
+	IDs    []int64        `json:"ids"`    // id 列表模式：精确选中的上游 id
+	Filter *bulkFilterDTO `json:"filter"` // 筛选模式：keyword/healthState（ids 为空时用）
+}
+
+// handleBulkDeleteUpstreams 批量删除上游（路由 POST /groups/:id/upstreams/bulk-delete）。
+//
+// 执行策略：id 列表模式分块 IN、同事务原子删除；筛选模式一条 DELETE。删除后刷新快照。返回受影响行数。
+func (a *App) handleBulkDeleteUpstreams(c *gin.Context) {
+	gid, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req bulkDeleteUpstreamsReq
+	if !bindJSON(c, &req) {
+		return
+	}
+
+	var affected int64
+	var err error
+	if len(req.IDs) > 0 {
+		// id 列表模式：按精确选中的 id 删除。
+		affected, err = a.store.BulkDeleteUpstreamsByIDs(gid, req.IDs)
+	} else if req.Filter != nil {
+		// 筛选模式（跨页全选）：按 keyword/healthState 删除当前分组匹配项。
+		f := store.UpstreamFilter{GroupID: gid, Keyword: req.Filter.Keyword, HealthState: req.Filter.HealthState}
+		// 高危子情形：filter 无任何条件 = 删除该组【全部】上游。记 Warn 审计区分普通按筛选删除。
+		if f.Keyword == "" && f.HealthState == "" {
+			a.logger.Warn("批量删除：按筛选删除整组全部上游", "groupId", gid)
+		}
+		affected, err = a.store.BulkDeleteUpstreamsByFilter(f)
+	} else {
+		// ids 为空且未带 filter：视为非法请求，拒绝以防误删整组（前端跨页全选必带非空 filter 对象）。
+		respondError(c, http.StatusBadRequest, "批量删除需提供 ids 或 filter 之一")
+		return
+	}
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "批量删除上游失败: "+err.Error())
+		return
+	}
+
+	// 删除 0 条无需重建快照（避免无谓全量重建）。
+	if affected > 0 {
+		if !a.rebuildAndSwap(c) {
+			return
+		}
+	}
+	a.logger.Info("批量删除上游", "groupId", gid, "byIDs", len(req.IDs) > 0, "affected", affected)
+	respondOK(c, gin.H{"affected": affected})
+}
+
 // testUpstreamResp 是测试连接结果（AC-38）。
 type testUpstreamResp struct {
 	OK        bool   `json:"ok"`
@@ -670,7 +738,13 @@ func (a *App) handleTestUpstream(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
-	res := a.health.TestProxy(ctx, *up, mode, probeURL)
+	res, flipped := a.health.TestProxy(ctx, *up, mode, probeURL)
 	a.logger.Info("代理测试连接", "upstreamId", up.ID, "host", up.Host, "ok", res.OK, "latencyMs", res.Latency.Milliseconds())
+	// 仅当测试翻转了健康状态（已落库）才重建路由快照，使该上游即时进出轮训池；未翻转则免去无谓全量重建。
+	if flipped {
+		if !a.rebuildAndSwap(c) {
+			return
+		}
+	}
 	respondOK(c, testUpstreamResp{OK: res.OK, LatencyMs: res.Latency.Milliseconds(), Error: res.Err})
 }

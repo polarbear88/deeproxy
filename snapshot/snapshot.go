@@ -34,17 +34,17 @@ import (
 //   - T5 pool / T6 server：HealthyUpstreams 是该组当前【健康且启用】的上游不可变列表，
 //     pool.Selector 据此做 SWRR；列表为空（整组全挂）→ 上层拒连回 RepHostUnreachable（G6）。
 type GroupView struct {
-	ID     int64           // 分组 ID
-	Name   string          // 分组名（连接用户名 group 段按名匹配）
+	ID     int64            // 分组 ID
+	Name   string           // 分组名（连接用户名 group 段按名匹配）
 	Type   domain.GroupType // A=动态上游 / B=代理池
-	Remark string          // 备注（日志/展示用）
+	Remark string           // 备注（日志/展示用）
 
 	// Engine 是该组专属的扁平化规则引擎（全局组在前、分组组在后、默认动作兜底）。
 	// 预编译于 Rebuild，转发期只读 Match，无锁并发安全。
 	Engine *rule.Engine
 
 	// HealthyUpstreams 是该组当前健康且启用的上游不可变快照（仅 Type B 有意义）。
-	// 元素为值拷贝，避免外部修改影响快照；pool.Selector 选中后用其 UsernameTemplate
+	// 元素为值拷贝，避免外部修改影响快照；pool.Selector 选中后用其 User（本身即模板）
 	// 做命名变量替换，再交给 dialer.DialUpstream。
 	HealthyUpstreams []UpstreamView
 
@@ -56,25 +56,21 @@ type GroupView struct {
 //
 // 提供 ToAuthUpstream 把视图转换为 dialer 可用的 auth.Upstream（用替换后的用户名）。
 type UpstreamView struct {
-	ID               int64
-	Host             string
-	Port             int
-	User             string // 定值用户名（UsernameTemplate 为空时用它）
-	UsernameTemplate string // 含 {var} 占位的用户名模板（为空表示无模板，用 User）
-	Pwd              string
-	Weight           int
-	Enabled          bool
-	Healthy          bool
+	ID      int64
+	Host    string
+	Port    int
+	User    string // 用户名，本身即模板（可含 {var} 占位；不含时为定值）
+	Pwd     string
+	Weight  int
+	Enabled bool
+	Healthy bool
 }
 
 // ResolveUser 计算该上游最终用于上游认证的用户名：
-//   - 有模板（含占位或不含占位皆可）→ 用 vars 替换模板 {name}（缺值补空、多余忽略，复用 auth.SubstituteTemplate）；
-//   - 无模板 → 用定值 User。
+//   - User 本身即模板，用 vars 替换其中的 {name}（缺值补空、多余忽略，复用 auth.SubstituteTemplate）；
+//   - 不含占位时 SubstituteTemplate 原样返回，等价于定值。
 func (u UpstreamView) ResolveUser(vars map[string]string) string {
-	if u.UsernameTemplate != "" {
-		return auth.SubstituteTemplate(u.UsernameTemplate, vars)
-	}
-	return u.User
+	return auth.SubstituteTemplate(u.User, vars)
 }
 
 // ToAuthUpstream 把上游视图（结合客户端命名变量 vars）转换为 dialer 可拨号的 auth.Upstream。

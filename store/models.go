@@ -52,11 +52,11 @@ type SystemSetting struct {
 	AdminPwdHash      string // 管理员密码 bcrypt 哈希（未设置时为空 → 触发首次设置引导）
 	StatRetentionDays int    // 统计聚合桶保留天数（默认 30）
 	// 健康检查默认值：新建 Type B 分组未显式配置时的兜底。
-	HCDefaultMode      HealthMode // 默认探测方式（url）
-	HCDefaultURL       string     // 默认探测 URL
-	HCDefaultInterval  int        // 默认探测间隔（秒，默认 600）
-	HCDefaultFailThld  int        // 默认连续失败阈值（默认 3）
-	HCDefaultRecvThld  int        // 默认连续成功恢复阈值（默认 2）
+	HCDefaultMode     HealthMode // 默认探测方式（url）
+	HCDefaultURL      string     // 默认探测 URL
+	HCDefaultInterval int        // 默认探测间隔（秒，默认 600）
+	HCDefaultFailThld int        // 默认连续失败阈值（默认 3）
+	HCDefaultRecvThld int        // 默认连续成功恢复阈值（默认 2）
 
 	// —— v2 运行期动态设置（取消配置文件后，原 YAML 引导项迁入此表，可在后台热改）——
 	// 这 5 项均不在字节中继热循环里：DefaultAction 在规则匹配时用、IdleTimeoutSec/Sniff* 在
@@ -75,7 +75,7 @@ type SystemSetting struct {
 	// 每轮 scanOnce 开头重新读取生效（不做在途 resize）。
 	ProbePoolSize int
 
-	UpdatedAt          time.Time  // 最后更新时间
+	UpdatedAt time.Time // 最后更新时间
 }
 
 // IsAdminConfigured 返回管理员是否已配置（用于首次启动引导判断 AC-19）。
@@ -91,10 +91,10 @@ func (s *SystemSetting) IsAdminConfigured() bool {
 // 鉴权、明文比对为微秒级；故取消哈希。⚠️ 仅 ProxyUser 如此；后台管理员密码
 // （SystemSetting.AdminPwdHash）仍用 bcrypt。
 type ProxyUser struct {
-	ID        int64
-	Username  string // 代理用户名（连接用户名 user-group 的首段）
-	Pwd       string // 连接密码（明文存储，鉴权时直接比对）
-	Remark    string // 备注
+	ID       int64
+	Username string // 代理用户名（连接用户名 user-group 的首段）
+	Pwd      string // 连接密码（明文存储，鉴权时直接比对）
+	Remark   string // 备注
 	// AllGroups 是「授权全部分组」通配标志（DEC-B1）：为 true 时该用户可访问所有分组，
 	// 且与逐组授权（group_user）【并存】——它是独立布尔标志，切换它【永不清空】精细授权行；
 	// IsAuthorized = all_groups 命中 OR 精细行命中。
@@ -106,38 +106,37 @@ type ProxyUser struct {
 // Group 是 SOCKS5 代理分组（前端称“代理组 / Proxy Group”）。
 // Type A 不含上游池；Type B 含多条 UpstreamProxy 并内嵌健康检查配置。
 type Group struct {
-	ID        int64
-	Name      string    // 分组名称
-	Remark    string    // 备注
-	Type      GroupType // A / B
+	ID     int64
+	Name   string    // 分组名称
+	Remark string    // 备注
+	Type   GroupType // A / B
 	// 健康检查配置（仅 Type B 有意义；Type A 忽略，不参与健康检查 G2）。
-	HCEnabled   bool       // 是否开启健康检查
-	HCMode      HealthMode // ping / url
-	HCURL       string     // url 模式的探测地址
-	HCInterval  int        // 探测间隔（秒）
-	HCFailThld  int        // 连续失败阈值（标记不可用）
-	HCRecvThld  int        // 连续成功阈值（恢复可用）
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	HCEnabled  bool       // 是否开启健康检查
+	HCMode     HealthMode // ping / url
+	HCURL      string     // url 模式的探测地址
+	HCInterval int        // 探测间隔（秒）
+	HCFailThld int        // 连续失败阈值（标记不可用）
+	HCRecvThld int        // 连续成功阈值（恢复可用）
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // UpstreamProxy 是 Type B 分组下的一条固定上游 SOCKS5 代理。
-//   - UsernameTemplate 是上游认证用户名模板，可含任意命名占位 {var}（如 acct-{region}-{session}）；
+//   - User 是上游认证用户名，本身即模板：可含任意命名占位 {var}（如 acct-{region}-{session}）；
 //     运行期由客户端尾段变量映射替换占位（缺值补空、多余忽略、顺序无关）。
 //   - HealthState 是探测出的健康状态，由健康检查 worker 维护（持久化便于前端展示与重启展示初值）。
 type UpstreamProxy struct {
-	ID               int64
-	GroupID          int64  // 所属 Type B 分组
-	Host             string // 上游主机（域名或 IP）
-	Port             int    // 上游端口
-	User             string // 上游认证用户名（不含模板占位时即定值）
-	UsernameTemplate string // 上游认证用户名模板（含 {var} 占位；为空则用 User）
-	Pwd              string // 上游认证密码
-	Weight           int    // 加权轮训权重（>=1）
-	Enabled          bool   // 是否启用（手动启停，false 时不参与选择 AC-18）
-	HealthState      bool   // 最近一次探测健康状态（true=健康；初值 true）
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID          int64
+	GroupID     int64  // 所属 Type B 分组
+	Host        string // 上游主机（域名或 IP）
+	Port        int    // 上游端口
+	User        string // 上游认证用户名，本身即模板（可含 {var} 占位；不含时为定值）
+	Pwd         string // 上游认证密码
+	Weight      int    // 加权轮训权重（>=1）
+	Enabled     bool   // 是否启用（手动启停，false 时不参与选择 AC-18）
+	HealthState bool   // 最近一次探测健康状态（true=健康；初值 true）
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // RuleGroup 是规则组（多对多关联分组，scope=global 时对所有连接生效）。

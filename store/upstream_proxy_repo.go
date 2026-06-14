@@ -13,9 +13,9 @@ func (s *Store) CreateUpstream(u *UpstreamProxy) error {
 		ts := fmtTime(now())
 		res, err := db.Exec(
 			`INSERT INTO upstream_proxy
-			   (group_id, host, port, user, username_template, pwd, weight, enabled, health_state, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			u.GroupID, u.Host, u.Port, u.User, u.UsernameTemplate, u.Pwd,
+			   (group_id, host, port, user, pwd, weight, enabled, health_state, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			u.GroupID, u.Host, u.Port, u.User, u.Pwd,
 			u.Weight, boolToInt(u.Enabled), boolToInt(u.HealthState), ts, ts,
 		)
 		if err != nil {
@@ -107,16 +107,16 @@ func (s *Store) ListUpstreamsPaged(f UpstreamFilter, page, pageSize int) ([]Upst
 	return list, total, nil
 }
 
-// UpdateUpstream 更新上游代理（主机/端口/凭据/模板/权重/启停）。
+// UpdateUpstream 更新上游代理（主机/端口/凭据/权重/启停）。
 // 健康状态用独立方法 UpdateUpstreamHealth 更新，避免 CRUD 与探测互相覆盖。
 func (s *Store) UpdateUpstream(u *UpstreamProxy) error {
 	return s.Write(func(db *sql.DB) error {
 		_, err := db.Exec(
 			`UPDATE upstream_proxy SET
-			   group_id = ?, host = ?, port = ?, user = ?, username_template = ?, pwd = ?,
+			   group_id = ?, host = ?, port = ?, user = ?, pwd = ?,
 			   weight = ?, enabled = ?, updated_at = ?
 			 WHERE id = ?`,
-			u.GroupID, u.Host, u.Port, u.User, u.UsernameTemplate, u.Pwd,
+			u.GroupID, u.Host, u.Port, u.User, u.Pwd,
 			u.Weight, boolToInt(u.Enabled), fmtTime(now()), u.ID,
 		)
 		if err != nil {
@@ -163,6 +163,66 @@ func (s *Store) DeleteUpstream(id int64) error {
 		}
 		return nil
 	})
+}
+
+// BulkDeleteUpstreamsByIDs 按 id 列表批量删除上游（镜像 BulkUpdateUpstreamsByIDs 的执行策略）。
+//
+// 执行策略：DELETE ... WHERE group_id=? AND id IN (...)，按 SQLite 参数上限【分块】，每块一条 SQL，
+// 全部分块在【同一事务】内执行，保证 all-or-nothing 原子；groupID 限定避免误删跨组。返回受影响行数。
+func (s *Store) BulkDeleteUpstreamsByIDs(groupID int64, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var affected int64
+	err := s.WriteTx(func(tx *sql.Tx) error {
+		// 按参数上限分块；每块预留 groupID 共 1 个固定参数。
+		const reserved = 1
+		chunkMax := sqliteMaxVars - reserved
+		for start := 0; start < len(ids); start += chunkMax {
+			end := start + chunkMax
+			if end > len(ids) {
+				end = len(ids)
+			}
+			chunk := ids[start:end]
+
+			placeholders := make([]string, len(chunk))
+			args := make([]any, 0, len(chunk)+reserved)
+			args = append(args, groupID)
+			for i, id := range chunk {
+				placeholders[i] = "?"
+				args = append(args, id)
+			}
+			q := fmt.Sprintf(
+				`DELETE FROM upstream_proxy WHERE group_id = ? AND id IN (%s)`,
+				joinComma(placeholders),
+			)
+			res, err := tx.Exec(q, args...)
+			if err != nil {
+				return fmt.Errorf("按 id 批量删除上游失败: %w", err)
+			}
+			n, _ := res.RowsAffected()
+			affected += n
+		}
+		return nil
+	})
+	return affected, err
+}
+
+// BulkDeleteUpstreamsByFilter 按筛选条件【一条 SQL】批量删除上游（镜像 BulkUpdateUpstreamsByFilter，
+// 支持跨页全选场景）。DELETE ... WHERE group_id=? AND <筛选>，一次写操作、非 N 次。返回受影响行数。
+func (s *Store) BulkDeleteUpstreamsByFilter(f UpstreamFilter) (int64, error) {
+	where, whereArgs := buildUpstreamWhere(f)
+
+	var affected int64
+	err := s.Write(func(db *sql.DB) error {
+		res, err := db.Exec(`DELETE FROM upstream_proxy`+where, whereArgs...)
+		if err != nil {
+			return fmt.Errorf("按筛选批量删除上游失败: %w", err)
+		}
+		affected, _ = res.RowsAffected()
+		return nil
+	})
+	return affected, err
 }
 
 // UpstreamBulkField 标识批量更新的目标字段。
@@ -268,7 +328,7 @@ func joinComma(ss []string) string {
 }
 
 // upstreamSelectCols 是上游查询的统一列清单（DRY）。
-const upstreamSelectCols = `SELECT id, group_id, host, port, user, username_template, pwd,
+const upstreamSelectCols = `SELECT id, group_id, host, port, user, pwd,
 	weight, enabled, health_state, created_at, updated_at FROM upstream_proxy`
 
 // queryUpstreams 执行查询并扫描成切片（多处复用，DRY）。
@@ -296,7 +356,7 @@ func scanUpstreamRow(sc rowScanner) (*UpstreamProxy, error) {
 	var enabled, health int
 	var createdAt, updatedAt string
 	if err := sc.Scan(
-		&u.ID, &u.GroupID, &u.Host, &u.Port, &u.User, &u.UsernameTemplate, &u.Pwd,
+		&u.ID, &u.GroupID, &u.Host, &u.Port, &u.User, &u.Pwd,
 		&u.Weight, &enabled, &health, &createdAt, &updatedAt,
 	); err != nil {
 		return nil, err

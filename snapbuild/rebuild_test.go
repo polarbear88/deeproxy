@@ -39,7 +39,7 @@ func TestRebuildMaterializesViews(t *testing.T) {
 	if err := st.CreateGroup(g); err != nil {
 		t.Fatal(err)
 	}
-	up1 := &store.UpstreamProxy{GroupID: g.ID, Host: "1.1.1.1", Port: 1080, UsernameTemplate: "acct-{region}", Weight: 3, Enabled: true, HealthState: true}
+	up1 := &store.UpstreamProxy{GroupID: g.ID, Host: "1.1.1.1", Port: 1080, User: "acct-{region}", Weight: 3, Enabled: true, HealthState: true}
 	up2 := &store.UpstreamProxy{GroupID: g.ID, Host: "2.2.2.2", Port: 1080, Weight: 1, Enabled: true, HealthState: false}
 	_ = st.CreateUpstream(up1)
 	_ = st.CreateUpstream(up2)
