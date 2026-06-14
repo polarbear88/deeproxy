@@ -13,7 +13,7 @@ import StatCard from '@/components/StatCard.vue'
 import { useThemeStore } from '@/stores/theme'
 import * as dashApi from '@/api/dashboard'
 import { getServerInfo } from '@/api/system'
-import { formatBytes, formatRate, formatNumber, formatUptime } from '@/utils/format'
+import { formatBytes, formatRate, formatNumber, formatUptime, formatBucketTime } from '@/utils/format'
 
 // i18n：仅展示层翻译，统计数据 name 字段（forward/direct/reject）保持原始值
 const { t } = useI18n()
@@ -162,7 +162,21 @@ const connectionExample = computed(() => {
 })
 
 const tsOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
+  // tooltip 标题把后端桶时间格式化为 2000/01/01 00:00:00 样式；
+  // 上行/下行按字节可读化，请求数按千分位，避免显示原始 RFC3339 字符串与裸数字。
+  tooltip: {
+    trigger: 'axis',
+    formatter: (params) => {
+      if (!params || !params.length) return ''
+      const title = formatBucketTime(params[0].axisValue)
+      const reqName = t('dashboard.legendReq')
+      const lines = params.map((p) => {
+        const val = p.seriesName === reqName ? formatNumber(p.value) : formatBytes(p.value)
+        return `${p.marker}${p.seriesName}: ${val}`
+      })
+      return [title, ...lines].join('<br/>')
+    },
+  },
   legend: { data: [t('dashboard.legendUp'), t('dashboard.legendDown'), t('dashboard.legendReq')] },
   grid: { left: 50, right: 50, top: 40, bottom: 30 },
   xAxis: { type: 'category', boundaryGap: false, data: tsData.value.times },

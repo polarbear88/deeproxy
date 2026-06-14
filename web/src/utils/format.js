@@ -52,3 +52,24 @@ export function formatTime(ts) {
 export function formatNumber(n) {
   return (Number(n) || 0).toLocaleString('en-US')
 }
+
+// 把时序图后端返回的「桶时间标签」格式化为 "YYYY/MM/DD HH:mm:ss"（供图表 tooltip 用）。
+//
+// 后端 times 有两种文本形态（见 store/traffic_stat_repo.go）：
+//   - 1h/24h 原粒度：RFC3339，如 "2026-06-14T12:34:00Z"
+//   - 7d 小时降采样：strftime 标签，如 "2026-06-14 12"（无分秒）
+// 这里统一解析为本地时间并按 2000/01/01 00:00:00 的样式输出；
+// 解析失败则原样返回，保证 tooltip 不至于显示空白。
+export function formatBucketTime(label) {
+  if (!label) return '-'
+  const s = String(label)
+  // 7d 小时桶 "YYYY-MM-DD HH"：缺分秒，补成完整时间再交给 Date 解析（按本地时区）。
+  const hourBucket = /^(\d{4})-(\d{2})-(\d{2}) (\d{2})$/.exec(s)
+  const d = hourBucket ? new Date(`${hourBucket[1]}-${hourBucket[2]}-${hourBucket[3]}T${hourBucket[4]}:00:00`) : new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  const pad = (x) => String(x).padStart(2, '0')
+  return (
+    `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  )
+}
