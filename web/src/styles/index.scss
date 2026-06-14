@@ -14,7 +14,11 @@
   --dp-aside-width: 220px;
   --dp-aside-width-collapsed: 64px;
   /* 全局卡片圆角：覆盖 Element Plus el-card 默认圆角，全站 el-card 统一生效（组件④ AC-4.3） */
-  --el-card-border-radius: 12px;
+  --el-card-border-radius: 16px;
+  /* 全局基础圆角：影响按钮/输入框/下拉/标签/弹窗等绝大多数 EP 组件，让整体更圆润 */
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 20px;
 }
 
 html.dark {
@@ -77,4 +81,23 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 列表操作列的 link 按钮点击后会出现蓝色 focus 外框，因表格行高有限底部会被裁切。
+ * 全局移除表格单元格内按钮的 focus 可见外框（仅去视觉框，键盘可达性不受影响）。（⑤） */
+.el-table .cell .el-button:focus,
+.el-table .cell .el-button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 让弹窗/抽屉/下拉菜单等也跟随更圆润的观感（②） */
+.el-dialog,
+.el-drawer,
+.el-message-box {
+  border-radius: 14px;
+}
+.el-dropdown-menu,
+.el-popper {
+  border-radius: 10px;
 }

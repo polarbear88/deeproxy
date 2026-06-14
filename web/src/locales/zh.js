@@ -213,6 +213,8 @@ export default {
   // 规则页专有文案（组件②，AC-2.5 全量）
   rules: {
     title: '规则管理',
+    matchCol: '匹配',
+    actionCol: '动作',
     // 规则组表
     emptyRuleGroups: '暂无规则组',
     rgName: '规则组名称',

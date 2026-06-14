@@ -210,6 +210,8 @@ export default {
   // Rules page text (component ②, full AC-2.5)
   rules: {
     title: 'Rules',
+    matchCol: 'Match',
+    actionCol: 'Action',
     // Rule group table
     emptyRuleGroups: 'No rule groups yet',
     rgName: 'Rule Group Name',

@@ -285,7 +285,7 @@ onBeforeUnmount(() => {
     </el-row>
 
     <!-- Top N 排行 -->
-    <el-row :gutter="16" class="dp-card-gap">
+    <el-row :gutter="16" class="dp-card-gap topn-row">
       <el-col :xs="24" :md="8">
         <el-card>
           <template #header><span>{{ t('dashboard.topGroups') }}</span></template>
@@ -404,6 +404,14 @@ onBeforeUnmount(() => {
    卡片再填满列高，使「运行健康」与「连接说明」底边对齐 */
 .full-card {
   height: 100%;
+}
+/* TopN 三卡片（流量Top分组 / 流量Top用户 / Top目标域名）等高：
+ * 固定卡片 body 高度与 Top 目标域名图表（240px）一致，内容超出时可上下滚动（⑥）。 */
+.topn-row {
+  :deep(.el-card__body) {
+    height: 280px;
+    overflow-y: auto;
+  }
 }
 .el-progress {
   margin: 12px 0;

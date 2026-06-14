@@ -288,6 +288,14 @@ onMounted(loadSettings)
   margin-left: 10px;
   font-size: 12px;
 }
+/* 分区分割线与上方内容拉开距离，使各分组在视觉上更清晰（④）。
+ * 第一个分割线在卡片顶部，不需要额外上间距。 */
+:deep(.el-divider--horizontal) {
+  margin-top: 36px;
+}
+:deep(.el-form > .el-divider--horizontal:first-child) {
+  margin-top: 8px;
+}
 .ie-row {
   display: flex;
   gap: 12px;

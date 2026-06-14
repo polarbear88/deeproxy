@@ -88,7 +88,15 @@ async function handleLogout() {
           <!-- 中/英语言切换：放在主题按钮与管理员下拉之间，风格与下拉一致 -->
           <el-dropdown @command="(c) => langStore.setLocale(c)">
             <span class="lang-trigger">
-              <el-icon><MapLocation /></el-icon>
+              <!-- 地球图标：Element Plus 无地球图标，用内联 SVG（圆+经纬线地球），随 el-icon 继承尺寸/颜色 -->
+              <el-icon>
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none"
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="2" y1="12" x2="22" y2="12" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              </el-icon>
               <span class="lang-label">{{ langStore.locale === 'zh' ? '中文' : 'English' }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
