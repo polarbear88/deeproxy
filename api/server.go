@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"deeproxy/config"
+	"deeproxy/connreg"
 	"deeproxy/pool"
 	"deeproxy/pool/health"
 	"deeproxy/snapbuild"
@@ -45,7 +46,8 @@ type App struct {
 
 	sessions *sessionStore // 内存会话表（D2-A）
 	limiter  *loginLimiter // 登录失败限流（AC-40）
-	registry *pool.Registry // per-group SWRR 选择器注册表（M5：删分组时回收对应 Selector）
+	registry *pool.Registry  // per-group SWRR 选择器注册表（M5：删分组时回收对应 Selector）
+	connReg  *connreg.Registry // 活跃连接登记表（实时连接功能）：只读快照。注意与上面 registry *pool.Registry 区分
 
 	logger    *slog.Logger   // 日志器（接入 syslog 缓冲，关键写操作埋点 → 系统日志页可见）
 	levelVar  *slog.LevelVar // 日志级别变量：后台改 log_level 时对它 Set 原子热生效（不重启）
@@ -65,6 +67,7 @@ func NewApp(
 	audit *syslog.AuditBuffer,
 	health *health.HealthChecker,
 	registry *pool.Registry,
+	connReg *connreg.Registry,
 	logger *slog.Logger,
 	levelVar *slog.LevelVar,
 	version string,
@@ -84,6 +87,10 @@ func NewApp(
 		// 测试或未注入时兜底，避免删分组回收时空指针。
 		registry = pool.NewRegistry()
 	}
+	if connReg == nil {
+		// 测试或未注入时兜底，避免读取活跃连接时空指针。
+		connReg = connreg.New()
+	}
 	return &App{
 		store:     st,
 		holder:    holder,
@@ -93,6 +100,7 @@ func NewApp(
 		audit:     audit,
 		health:    health,
 		registry:  registry,
+		connReg:   connReg,
 		sessions:  newSessionStore(),
 		limiter:   newLoginLimiter(maxLoginFails, loginLockDuration),
 		logger:    logger,
@@ -135,6 +143,7 @@ func (a *App) Router() *gin.Engine {
 		auth.Use(a.requireAuth())
 		{
 			// 仪表盘聚合 AC-24/27
+			auth.GET("/connections", a.handleListConnections)           // 实时活跃连接列表（Top-N + 总数 + 截断标志）
 			auth.GET("/dashboard/overview", a.handleDashboardOverview) // 实时+今日扁平概览
 			auth.GET("/dashboard/timeseries", a.handleTimeSeries)      // 时序图 1h/24h/7d
 			auth.GET("/dashboard/action-dist", a.handleActionDist)     // 动作分布饼图

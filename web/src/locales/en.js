@@ -30,6 +30,7 @@ export default {
     rule: 'Rules',
     user: 'Users',
     syslog: 'System Log',
+    connections: 'Realtime Connections',
     system: 'Settings',
     login: 'Login',
     setup: 'Initial Setup',
@@ -383,6 +384,31 @@ export default {
     // Failed line echo: line {line}: {reason}
     failedLine: 'Line {line}: {reason}',
     failedSummary: '{ok} succeeded, {failed} failed',
+  },
+  // Realtime connections page text (US-005)
+  // Note: action.forward / action.direct are already defined in the action block above
+  connections: {
+    // Table column headers
+    colTarget: 'Target Host',
+    colAction: 'Action',
+    colDuration: 'Duration',
+    colUpstream: 'Upstream Proxy',
+    colUserGroup: 'User / Group',
+    colClient: 'Client',
+    colStartTs: 'Started At',
+    // Truncation hint: showing {shown} of {total}
+    truncatedHint: 'Showing {shown} of {total} (limit reached, newest 500)',
+    // Empty table placeholder
+    empty: 'No active connections',
+    // Sort options
+    sortByStart: 'By start time',
+    sortByDuration: 'By duration',
+    // Auto-refresh controls
+    autoRefresh: 'Auto refresh',
+    intervalLabel: 'Interval',
+    off: 'Off',
+    // Rejected connections note (rejected conns are not in the active list)
+    rejectHelp: 'Rejected connections are not shown here. Check the System Log page for audit records.',
   },
   // Users page text (component ⑦, full AC-2.5)
   users: {

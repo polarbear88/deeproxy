@@ -37,6 +37,7 @@ import (
 	"github.com/things-go/go-socks5/statute"
 
 	"deeproxy/auth"
+	"deeproxy/connreg"
 	"deeproxy/detect"
 	"deeproxy/dialer"
 	"deeproxy/domain"
@@ -158,6 +159,7 @@ type handler struct {
 	audit    *syslog.AuditBuffer // 连接审计
 	logger   *slog.Logger
 	holder   *snapshot.Holder // 运行期快照（无锁读）：建连时读 idle/sniff 等动态设置
+	conns    *connreg.Registry // 活跃连接登记表（实时连接功能）：连接开始登记、结束注销，O(1) 不进热路径
 }
 
 // errNoUpstreamSource 表示 Type A 组无尾段（无动态上游来源）却需 forward（G1）。
@@ -179,6 +181,25 @@ func (h *handler) connectHandle(ctx context.Context, writer io.Writer, req *sock
 	// 连接计数：进入即 +1，退出 -1（活跃连接数仪表盘实时值）。
 	h.counter.ConnOpened()
 	defer h.counter.ConnClosed()
+
+	// 实时连接登记：捕获客户端来源地址（正确来源是底层 net.Conn 的 RemoteAddr，
+	// 不是 req.RemoteAddr——后者并非客户端 TCP 源地址）。断言失败回退空串（防御性，
+	// 与 peekFirstPacket 中对 writer 的同款断言一致）。
+	client := ""
+	if c, ok := writer.(net.Conn); ok {
+		client = c.RemoteAddr().String()
+	}
+	d.connID = h.conns.Register(connreg.ConnMeta{
+		Target: d.host,
+		Action: string(d.action), // 嗅探路径此处为占位，嗅探解析后由 SetAction 回填真值
+		User:   d.auth.User,
+		Group:  d.auth.Group,
+		Client: client,
+		Start:  time.Now(),
+	})
+	// 与 defer h.counter.ConnClosed() 同 defer 区，保证每条退出路径（成功/拨号失败/
+	// 嗅探拒绝/panic 经 recoverPool）都注销，活跃计数与 stats.ActiveConns 对齐。
+	defer h.conns.Deregister(d.connID)
 
 	// 实际拨号目标始终用客户端给的原始地址（嗅探到的域名只用于选路，不改变拨号目标，
 	// 以免上游把域名重解析到与客户端不同的 IP）。
@@ -259,6 +280,7 @@ func (h *handler) dialAndRelay(ctx context.Context, writer io.Writer, req *socks
 
 	// 动作分布 + 请求数埋点（连接成功建立时）。
 	h.markAction(d)
+	h.conns.SetUpstream(d.connID, upstreamString(d, usedUpstream)) // 回填实际上游（O(1)，非热路径）
 	h.counter.IncReq(d.auth.GroupID, d.auth.UserID)
 	h.counter.IncDomain(d.host, d.auth.GroupID) // 目标域名命中埋点（纯 IP 也计入）
 	h.logger.Info("转发", "host", d.host, "action", d.action, "group", d.auth.Group)
@@ -385,6 +407,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 
 	// 用嗅探后的动作覆盖 decision，复用故障转移拨号逻辑。
 	d.action = action
+	h.conns.SetAction(d.connID, string(action)) // 嗅探解析出 forward/direct 后回填真值；reject 守卫之上不会到这里
 	upConn, usedUpstream, err := h.dialWithFailover(ctx, d, target)
 	if err != nil {
 		h.logger.Warn("嗅探后拨号失败", "host", routeHost, "action", action, "err", err)
@@ -400,6 +423,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 		}
 	}
 	h.markAction(d)
+	h.conns.SetUpstream(d.connID, upstreamString(d, usedUpstream)) // 回填实际上游（O(1)，非热路径）
 	h.counter.IncReq(d.auth.GroupID, d.auth.UserID)
 	h.counter.IncDomain(routeHost, d.auth.GroupID) // 嗅探后 routeHost 更准（嗅出域名则记域名，否则记 IP）
 	h.logger.Info("嗅探转发", "host", routeHost, "action", action)
@@ -433,14 +457,23 @@ func (h *handler) recordTraffic(d decision, up, down int64) {
 	}
 }
 
+// upstreamString 计算本连接实际使用的上游地址字符串（DRY：审计与活跃连接登记共用）。
+//   - Type B：用拨号选中的 UpstreamView（host:port）。
+//   - Type A forward：用鉴权解出的动态上游 Addr()。
+//   - direct / 无上游：返回空串。
+func upstreamString(d decision, view *snapshot.UpstreamView) string {
+	if view != nil {
+		return net.JoinHostPort(view.Host, strconv.Itoa(view.Port))
+	}
+	if d.action == rule.ActionForward && d.auth.GroupType == domain.TypeA && d.auth.HasDynamicUpstream {
+		return d.auth.DynamicUpstream.Addr()
+	}
+	return ""
+}
+
 // recordAudit 写一条连接审计记录（内存环形缓冲，不落库）。
 func (h *handler) recordAudit(d decision, target string, view *snapshot.UpstreamView, up, down int64) {
-	upstreamStr := ""
-	if view != nil {
-		upstreamStr = net.JoinHostPort(view.Host, strconv.Itoa(view.Port))
-	} else if d.action == rule.ActionForward && d.auth.GroupType == domain.TypeA && d.auth.HasDynamicUpstream {
-		upstreamStr = d.auth.DynamicUpstream.Addr()
-	}
+	upstreamStr := upstreamString(d, view)
 	h.audit.Record(syslog.AuditEntry{
 		User:      d.auth.User,
 		Group:     d.auth.Group,
@@ -515,12 +548,14 @@ func (h *handler) peekFirstPacket(underlying io.Writer, r io.Reader, sniffTimeou
 //   - registry：per-group SWRR Selector 注册表（Type B 选上游）。
 //   - counter：内存原子统计计数器（埋点）。
 //   - audit：连接审计内存环形缓冲。
+//   - conns：活跃连接登记表（实时连接功能）：连接开始登记、结束注销，供后台仪表盘读快照。
 //   - logger：日志器（同时接 syslog 内存缓冲 Handler，由 cmd 装配）。
 func New(
 	holder *snapshot.Holder,
 	registry *pool.Registry,
 	counter *stats.Counter,
 	audit *syslog.AuditBuffer,
+	conns *connreg.Registry,
 	logger *slog.Logger,
 ) *socks5.Server {
 	h := &handler{
@@ -529,6 +564,7 @@ func New(
 		audit:    audit,
 		logger:   logger,
 		holder:   holder,
+		conns:    conns,
 	}
 	provider := authProvider(holder)
 	cr := &connectRule{

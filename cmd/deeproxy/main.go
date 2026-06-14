@@ -30,6 +30,7 @@ import (
 
 	"deeproxy/api"
 	"deeproxy/config"
+	"deeproxy/connreg"
 	"deeproxy/internal/logging"
 	"deeproxy/pool"
 	"deeproxy/pool/health"
@@ -171,6 +172,9 @@ Examples:
 	// ⑥ 运行期协作者：SWRR 选择器注册表、内存统计计数器。
 	registry := pool.NewRegistry()
 	counter := stats.NewCounter()
+	// 活跃连接登记表（实时连接功能）：唯一实例，同时注入 SOCKS5 服务端（写：连接开始登记/结束注销）
+	// 与管理后端（读：GET /api/connections 快照）。一个指针两端共享，是该功能的关键集成点。
+	connReg := connreg.New()
 
 	// 健康检查器：探测翻转后经 refresher 触发快照重建+原子替换，刷新 HealthyUpstreams。
 	// P2：健康翻转的重建经【去抖刷新器】合并——一段静默窗口内的多次翻转只触发一次全量重建，
@@ -193,7 +197,7 @@ Examples:
 	go debounced.run(ctx) // P2：去抖刷新循环（合并健康翻转触发的全量重建）
 
 	// 装配管理后台（Gin + embed 前端，独立端口）。levelVar 传入以便后台改日志级别时热生效。
-	app := api.NewApp(st, holder, cfg, counter, logBuf, auditBuf, healthChecker, registry, logger, levelVar, version)
+	app := api.NewApp(st, holder, cfg, counter, logBuf, auditBuf, healthChecker, registry, connReg, logger, levelVar, version)
 	adminErr := make(chan error, 1)
 	go func() {
 		logger.Info("管理后台启动", "listen", cfg.AdminListen)
@@ -203,7 +207,7 @@ Examples:
 	// 装配 SOCKS5 中继服务（读 atomic 快照；空闲/嗅探/默认动作均从快照动态读）。
 	// C2：用 server.Listen 创建【带握手读超时】的监听器（防 slowloris 半开连接泄漏），
 	// 同时持有该 listener 句柄以便优雅关闭时主动关闭、停止接受新连接（H1）。
-	srv := server.New(holder, registry, counter, auditBuf, logger)
+	srv := server.New(holder, registry, counter, auditBuf, connReg, logger)
 	socksLn, err := server.Listen("tcp", cfg.Listen)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SOCKS5 服务监听失败 %q: %v\n", cfg.Listen, err)
@@ -241,9 +245,9 @@ Examples:
 		logger.Warn("管理后台优雅关闭超时/出错", "err", err)
 	}
 
-	stop()                              // 解除信号捕获；ctx 已取消，后台 worker 开始退出
+	stop()                             // 解除信号捕获；ctx 已取消，后台 worker 开始退出
 	time.Sleep(200 * time.Millisecond) // 给 flush worker 的「退出前最后一次 flush」一点落库窗口
-	if err := st.Close(); err != nil {  // 确定性排空写队列后关库
+	if err := st.Close(); err != nil { // 确定性排空写队列后关库
 		logger.Warn("关闭数据库出错", "err", err)
 	}
 	logger.Info("已优雅关闭")

@@ -33,6 +33,7 @@ export default {
     rule: '规则管理',
     user: '用户管理',
     syslog: '系统日志',
+    connections: '实时连接',
     system: '系统设置',
     login: '登录',
     setup: '首次设置',
@@ -386,6 +387,31 @@ export default {
     // 失败行回显：第 {line} 行：{reason}
     failedLine: '第 {line} 行：{reason}',
     failedSummary: '成功 {ok} 条，失败 {failed} 条',
+  },
+  // 实时连接页专有文案（US-005）
+  // 注意：action.forward / action.direct 已在 action 块定义，此处不重复
+  connections: {
+    // 表格列标题
+    colTarget: '目标主机',
+    colAction: '动作',
+    colDuration: '连接时长',
+    colUpstream: '上游代理',
+    colUserGroup: '用户 / 分组',
+    colClient: '客户端来源',
+    colStartTs: '开始时间',
+    // 截断提示：显示了 {shown} 条，共 {total} 条
+    truncatedHint: '显示 {shown} / 共 {total} 条（已达上限，最新 500 条）',
+    // 空表占位
+    empty: '当前无活跃连接',
+    // 排序选项
+    sortByStart: '按开始时间',
+    sortByDuration: '按连接时长',
+    // 自动刷新控件
+    autoRefresh: '自动刷新',
+    intervalLabel: '刷新间隔',
+    off: '关',
+    // 拒绝连接说明（拒绝记录不在活跃列表中，引导用户去日志页查看）
+    rejectHelp: '被拒绝的连接不在活跃列表中，请前往「系统日志」页面查看审计记录。',
   },
   // 用户页专有文案（组件⑦，AC-2.5 全量）
   users: {

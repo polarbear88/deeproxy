@@ -56,6 +56,12 @@ const routes = [
         meta: { title: 'menu.syslog', icon: 'Document' },
       },
       {
+        path: 'connections',
+        name: 'connections',
+        component: () => import('@/views/connections/RealtimeConnections.vue'),
+        meta: { title: 'menu.connections', icon: 'Histogram' },
+      },
+      {
         path: 'system',
         name: 'system',
         component: () => import('@/views/system/Settings.vue'),

@@ -17,6 +17,7 @@ import (
 	socks5 "github.com/things-go/go-socks5"
 
 	"deeproxy/config"
+	"deeproxy/connreg"
 	"deeproxy/internal/logging"
 	"deeproxy/pool"
 	"deeproxy/snapbuild"
@@ -39,6 +40,7 @@ type deeproxyEnv struct {
 	holder  *snapshot.Holder
 	counter *stats.Counter
 	audit   *syslog.AuditBuffer
+	conns   *connreg.Registry // 活跃连接登记表（实时连接功能）：供 never-reject 等测试观察
 	cfg     *config.Config
 }
 
@@ -144,7 +146,8 @@ func startDeeproxyV2(t *testing.T, spec seedSpec) *deeproxyEnv {
 	audit := syslog.NewAuditBuffer(100)
 	logger := logging.New("error")
 
-	srv := New(holder, registry, counter, audit, logger)
+	conns := connreg.New()
+	srv := New(holder, registry, counter, audit, conns, logger)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -159,6 +162,7 @@ func startDeeproxyV2(t *testing.T, spec seedSpec) *deeproxyEnv {
 		holder:  holder,
 		counter: counter,
 		audit:   audit,
+		conns:   conns,
 		cfg:     cfg,
 	}
 }

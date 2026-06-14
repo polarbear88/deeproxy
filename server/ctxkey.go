@@ -37,6 +37,11 @@ type decision struct {
 	// 用同一份设置」。取消配置文件后这些值来自 system_setting，可后台热改（新连接生效）。
 	idle         time.Duration // 连接双向空闲超时（拨号后 WrapIdle 用）
 	sniffTimeout time.Duration // 嗅探首包等待超时（needsSniff 路径用）
+
+	// connID 是本连接在活跃连接登记表（connreg.Registry）中的唯一 id。
+	// 在 connectHandle 进入处登记后写入，按值随 decision 流向 dialAndRelay/handleSniff，
+	// 用于拨号成功后回填上游、嗅探解析后回填动作——零签名改动。
+	connID int64
 }
 
 // ctxKey 是放入 context 的私有 key 类型，避免与其他包的 key 冲突。
