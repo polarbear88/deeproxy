@@ -29,6 +29,9 @@ if [[ "$SKIP_WEB" -eq 0 ]]; then
   pnpm install --frozen-lockfile
   pnpm build
   popd >/dev/null
+  # vite emptyOutDir=true 会清空 api/dist（含被 git 跟踪的 .gitkeep 占位），构建后补回，
+  # 避免误删该占位文件污染 git 工作区（dist 真实产物已 gitignore）。
+  touch api/dist/.gitkeep
 else
   echo ">> [1/2] 跳过前端构建（--skip-web），沿用现有 api/dist"
 fi
