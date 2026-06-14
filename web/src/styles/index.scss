@@ -24,12 +24,30 @@ html.dark {
   --dp-content-bg: #141414;
 }
 
-/* 全局卡片圆角加大（修复：Element Plus 在 .el-card 选择器自身声明了
- * --el-card-border-radius:4px，会就近遮蔽 :root 的覆盖，导致在 :root 设值无效。
- * 必须把变量设在 .el-card 上，并同时直接覆写 border-radius 双保险，才能让所有卡片真正变圆。） */
-.el-card {
+/* 全局卡片圆角加大 + 阴影减弱。
+ * 根因：unplugin-vue-components 的 ElementPlusResolver 会按需把 el-card 样式
+ * 作为独立 chunk 在运行时注入 <head>，其 `.el-card{--el-card-border-radius:4px;...}`
+ * 注入时机晚于打包进 index.css 的全局样式，同特异度下后注入者胜出 → 覆盖回 4px。
+ * 解决：用更高特异度选择器 `body .el-card`（0,1,1 > 单类 0,1,0），并直接写死
+ * border-radius，无视注入顺序都生效；不再依赖 :root/同特异度覆盖。 */
+body .el-card {
   --el-card-border-radius: 16px;
   border-radius: 16px;
+  /* 边框阴影调小：用更轻的阴影替代 EP 默认 --el-box-shadow-light */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
+}
+/* 覆盖 EP 的三种阴影态（is-always-shadow / hover / focus），统一为更轻的阴影 */
+body .el-card.is-always-shadow,
+body .el-card.is-hover-shadow:hover,
+body .el-card.is-hover-shadow:focus {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
+}
+html.dark body .el-card,
+html.dark body .el-card.is-always-shadow,
+html.dark body .el-card.is-hover-shadow:hover,
+html.dark body .el-card.is-hover-shadow:focus {
+  /* 暗色下阴影更深一点才可见，但仍保持轻量 */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3) !important;
 }
 
 * {
