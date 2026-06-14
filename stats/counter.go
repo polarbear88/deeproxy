@@ -12,6 +12,7 @@ package stats
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // dimKey 是计数维度键：(分组, 用户)。
@@ -93,6 +94,16 @@ type Counter struct {
 	rejectRule atomic.Int64
 	rejectAuth atomic.Int64
 
+	// —— M2：今日拒连（按本地自然日归零）——
+	// 拒连不落 SQLite 时间桶（与流量不同），故无法像 todayUp 那样从库聚合「今日」。
+	// 为让仪表盘「今日拒连」真正按日归零，这里额外维护一组【今日】计数 + 当天日期戳：
+	// 埋点与读取前都调 rollRejectDayLocked 检查是否跨日，跨日则把今日两类清零并更新日期戳。
+	// 用一把轻量小锁（仅拒连路径与仪表盘读取走，远低频于字节中继，绝不在中继循环内）。
+	rejectDayMu   sync.Mutex
+	rejectDayKey  int64 // 当天日期键（年*10000+月*100+日，本地时区）
+	todayRejRule  int64 // 今日规则拒连
+	todayRejAuth  int64 // 今日鉴权拒连
+
 	// 动作分布累计（forward/direct/reject 连接数），供仪表盘实时占比兜底。
 	actForward atomic.Int64
 	actDirect  atomic.Int64
@@ -104,6 +115,18 @@ type Counter struct {
 	// AddUp/AddDown 各多一次 atomic.Add（纳秒级、无锁），读取 O(1)，且与 SQLite 完全解耦。
 	totalUpBytes   atomic.Int64
 	totalDownBytes atomic.Int64
+
+	// —— P4：实时速率（字节/秒）——
+	// 旧实现由仪表盘 API 在【每次请求间】对累计字节做差分，速率因此耦合轮询节奏：
+	// 不轮询则无速率、多标签页并发会互相污染基线。改由 flush worker 以【固定周期】
+	// 调 SampleRates 差分一次、把结果存入这两个 atomic；仪表盘只读，O(1)、与轮询解耦。
+	upRateBps   atomic.Int64 // 最近一次采样的上行速率（字节/秒）
+	downRateBps atomic.Int64 // 最近一次采样的下行速率（字节/秒）
+
+	// SampleRates 的上次采样基线（仅 flush worker 单 goroutine 访问，无需原子）。
+	rateLastUp   int64
+	rateLastDown int64
+	rateLastTS   time.Time
 }
 
 // NewCounter 创建空计数器。
@@ -194,11 +217,43 @@ func (c *Counter) ConnClosed() { c.activeConns.Add(-1) }
 // ActiveConns 返回当前活跃连接数。
 func (c *Counter) ActiveConns() int64 { return c.activeConns.Load() }
 
-// IncRejectRule 规则 reject 拒连 +1。
-func (c *Counter) IncRejectRule() { c.rejectRule.Add(1) }
+// IncRejectRule 规则 reject 拒连 +1（同时累加今日计数，M2）。
+func (c *Counter) IncRejectRule() {
+	c.rejectRule.Add(1)
+	c.rejectDayMu.Lock()
+	c.rollRejectDayLocked()
+	c.todayRejRule++
+	c.rejectDayMu.Unlock()
+}
 
-// IncRejectAuth 鉴权失败拒连 +1。
-func (c *Counter) IncRejectAuth() { c.rejectAuth.Add(1) }
+// IncRejectAuth 鉴权失败拒连 +1（同时累加今日计数，M2）。
+func (c *Counter) IncRejectAuth() {
+	c.rejectAuth.Add(1)
+	c.rejectDayMu.Lock()
+	c.rollRejectDayLocked()
+	c.todayRejAuth++
+	c.rejectDayMu.Unlock()
+}
+
+// rollRejectDayLocked 检查是否跨入新的本地自然日，跨日则把今日两类拒连清零并更新日期戳。
+// 必须在持有 rejectDayMu 时调用。埋点与读取前都会先调它，保证「今日」语义随墙钟自然滚动。
+func (c *Counter) rollRejectDayLocked() {
+	now := time.Now()
+	key := int64(now.Year())*10000 + int64(now.Month())*100 + int64(now.Day())
+	if key != c.rejectDayKey {
+		c.rejectDayKey = key
+		c.todayRejRule = 0
+		c.todayRejAuth = 0
+	}
+}
+
+// TodayRejects 返回今日（本地自然日）规则/鉴权拒连数，跨日自动归零（M2）。
+func (c *Counter) TodayRejects() (rule, auth int64) {
+	c.rejectDayMu.Lock()
+	defer c.rejectDayMu.Unlock()
+	c.rollRejectDayLocked()
+	return c.todayRejRule, c.todayRejAuth
+}
 
 // IncActionForward forward 动作连接 +1。
 func (c *Counter) IncActionForward() { c.actForward.Add(1) }
@@ -221,6 +276,10 @@ type Realtime struct {
 	// 进程级累计上/下行字节总量（单调递增），供实时速率采样（AC-5.5，差分计算 KB/s）。
 	TotalUpBytes   int64
 	TotalDownBytes int64
+
+	// P4：最近一次由 flush worker 采样的实时速率（字节/秒），与轮询解耦。
+	UpRateBps   int64
+	DownRateBps int64
 }
 
 // RealtimeSnapshot 原子读取各进程级瞬时计数（无锁）。
@@ -234,7 +293,37 @@ func (c *Counter) RealtimeSnapshot() Realtime {
 		ActReject:      c.actReject.Load(),
 		TotalUpBytes:   c.totalUpBytes.Load(),
 		TotalDownBytes: c.totalDownBytes.Load(),
+		UpRateBps:      c.upRateBps.Load(),
+		DownRateBps:    c.downRateBps.Load(),
 	}
+}
+
+// SampleRates 由 flush worker 以固定周期调用一次：对累计字节做差分算出瞬时速率（字节/秒），
+// 存入 upRateBps/downRateBps 供仪表盘 O(1) 读取（P4：把速率采样从「每请求差分」改为
+// 「固定周期差分」，与轮询节奏彻底解耦，多标签页读取互不干扰）。
+//
+// 仅 flush worker 单 goroutine 调用，故 rateLast* 基线无需原子；结果用 atomic 存，读侧无锁。
+// 首次调用（基线为零）只建立基线、速率记 0；负增量（理论上不会，计数单调）兜底为 0。
+func (c *Counter) SampleRates() {
+	now := time.Now()
+	up := c.totalUpBytes.Load()
+	down := c.totalDownBytes.Load()
+
+	if !c.rateLastTS.IsZero() {
+		if dt := now.Sub(c.rateLastTS).Seconds(); dt > 0 {
+			if u := float64(up-c.rateLastUp) / dt; u > 0 {
+				c.upRateBps.Store(int64(u))
+			} else {
+				c.upRateBps.Store(0)
+			}
+			if d := float64(down-c.rateLastDown) / dt; d > 0 {
+				c.downRateBps.Store(int64(d))
+			} else {
+				c.downRateBps.Store(0)
+			}
+		}
+	}
+	c.rateLastUp, c.rateLastDown, c.rateLastTS = up, down, now
 }
 
 // DimSnapshot 是某维度本周期增量（flush 内部用）。

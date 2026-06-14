@@ -87,6 +87,9 @@ func (f *Flusher) Run(ctx context.Context) {
 	defer flushTicker.Stop()
 	defer cleanupTicker.Stop()
 
+	// P4：先采一次建立速率基线（首个 flush 周期即有 0 基线，避免首样本异常大）。
+	f.counter.SampleRates()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -94,6 +97,8 @@ func (f *Flusher) Run(ctx context.Context) {
 			f.flushOnce()
 			return
 		case <-flushTicker.C:
+			// P4：每个 flush 周期采样一次实时速率（固定周期差分，与仪表盘轮询解耦）。
+			f.counter.SampleRates()
 			f.flushOnce()
 		case <-cleanupTicker.C:
 			f.cleanupOnce()

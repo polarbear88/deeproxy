@@ -13,6 +13,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"deeproxy/config"
+	"deeproxy/pool"
 	"deeproxy/pool/health"
 	"deeproxy/snapbuild"
 	"deeproxy/snapshot"
@@ -43,12 +45,14 @@ type App struct {
 
 	sessions *sessionStore // 内存会话表（D2-A）
 	limiter  *loginLimiter // 登录失败限流（AC-40）
+	registry *pool.Registry // per-group SWRR 选择器注册表（M5：删分组时回收对应 Selector）
 
 	logger    *slog.Logger   // 日志器（接入 syslog 缓冲，关键写操作埋点 → 系统日志页可见）
 	levelVar  *slog.LevelVar // 日志级别变量：后台改 log_level 时对它 Set 原子热生效（不重启）
 	startedAt time.Time      // 进程启动时间（仪表盘 uptime 计算）
-	rate      *rateSampler   // 仪表盘上/下行速率采样器（API 层算差值）
 	version   string         // 构建版本号（由 cmd 注入，仪表盘健康卡片展示）
+
+	httpSrv *http.Server // 底层 HTTP 服务（H1：支持优雅关闭 Shutdown）
 }
 
 // NewApp 构建管理后端容器。各依赖由 cmd 装配阶段（阶段9）注入。
@@ -60,6 +64,7 @@ func NewApp(
 	logs *syslog.LogBuffer,
 	audit *syslog.AuditBuffer,
 	health *health.HealthChecker,
+	registry *pool.Registry,
 	logger *slog.Logger,
 	levelVar *slog.LevelVar,
 	version string,
@@ -75,6 +80,10 @@ func NewApp(
 		// 测试或未注入时兜底为 dev，与 main 包默认值语义一致。
 		version = "dev"
 	}
+	if registry == nil {
+		// 测试或未注入时兜底，避免删分组回收时空指针。
+		registry = pool.NewRegistry()
+	}
 	return &App{
 		store:     st,
 		holder:    holder,
@@ -83,12 +92,12 @@ func NewApp(
 		logs:      logs,
 		audit:     audit,
 		health:    health,
+		registry:  registry,
 		sessions:  newSessionStore(),
 		limiter:   newLoginLimiter(maxLoginFails, loginLockDuration),
 		logger:    logger,
 		levelVar:  levelVar,
 		startedAt: time.Now(),
-		rate:      &rateSampler{},
 		version:   version,
 	}
 }
@@ -188,10 +197,35 @@ func (a *App) Router() *gin.Engine {
 	return r
 }
 
-// Run 在 cfg.AdminListen（默认 0.0.0.0:8080，AC-41）上启动管理后端 HTTP 服务（阻塞）。
+// Run 在 cfg.AdminListen（默认 0.0.0.0，AC-41）上启动管理后端 HTTP 服务（阻塞）。
 // 由 cmd 装配阶段（T9）调用；独立于 SOCKS5 监听端口。
+//
+// H1：用显式 *http.Server 承载，以便 Shutdown 优雅关闭（等在途请求收尾）。
+// 正常关闭（Shutdown 触发）时 ListenAndServe 返回 http.ErrServerClosed，本方法归一为 nil，
+// 使 cmd 不把「优雅关闭」误判为致命错误。
+//
+// 仅设 ReadHeaderTimeout（防慢速请求头 slowloris，不波及 SSE 长连接的响应体写）；
+// 不设 WriteTimeout，否则会切断 /syslog/stream 这类 SSE 长连接。
 func (a *App) Run() error {
-	return a.Router().Run(a.cfg.AdminListen)
+	a.httpSrv = &http.Server{
+		Addr:              a.cfg.AdminListen,
+		Handler:           a.Router(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	err := a.httpSrv.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil // 优雅关闭，非致命
+	}
+	return err
+}
+
+// Shutdown 优雅关闭管理后端：停止接受新连接并等待在途请求在 ctx 截止前收尾（H1）。
+// httpSrv 尚未创建（Run 未调用）时为 no-op。
+func (a *App) Shutdown(ctx context.Context) error {
+	if a.httpSrv == nil {
+		return nil
+	}
+	return a.httpSrv.Shutdown(ctx)
 }
 
 // rebuildAndSwap 在写操作 commit 后刷新转发侧快照（G4 回滚封装）。

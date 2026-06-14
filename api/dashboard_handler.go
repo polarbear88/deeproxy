@@ -9,44 +9,12 @@ package api
 import (
 	"net/http"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"deeproxy/internal/netutil"
 )
-
-// rateSampler 记录上次累计字节采样，用于在 overview 请求间算出瞬时速率（KB/s）。
-// 之所以放 API 层而非 stats：stats 只维护累计值，速率是展示侧需求，API 自存上次采样最简洁。
-type rateSampler struct {
-	mu       sync.Mutex
-	lastUp   int64
-	lastDown int64
-	lastTS   time.Time
-}
-
-// sample 传入当前累计上/下行字节，返回自上次采样以来的速率（字节/秒）。
-// 首次采样无基线 → 速率 0。
-func (r *rateSampler) sample(up, down int64) (upRate, downRate float64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := time.Now()
-	if !r.lastTS.IsZero() {
-		if dt := now.Sub(r.lastTS).Seconds(); dt > 0 {
-			upRate = float64(up-r.lastUp) / dt
-			downRate = float64(down-r.lastDown) / dt
-			if upRate < 0 {
-				upRate = 0 // 计数器重置等异常情况兜底
-			}
-			if downRate < 0 {
-				downRate = 0
-			}
-		}
-	}
-	r.lastUp, r.lastDown, r.lastTS = up, down, now
-	return upRate, downRate
-}
 
 // overviewResp 是仪表盘概览（实时 + 今日扁平字段，对齐前端 dashboard.js）。
 type overviewResp struct {
@@ -56,8 +24,8 @@ type overviewResp struct {
 	TodayUp         int64   `json:"todayUp"`         // 今日上行字节
 	TodayDown       int64   `json:"todayDown"`       // 今日下行字节
 	TodayReq        int64   `json:"todayReq"`        // 今日请求数
-	TodayRejectRule int64   `json:"todayRejectRule"` // 今日规则拒连（累计瞬时值）
-	TodayRejectAuth int64   `json:"todayRejectAuth"` // 今日鉴权拒连（累计瞬时值）
+	TodayRejectRule int64   `json:"todayRejectRule"` // 今日规则拒连（按本地自然日归零，M2）
+	TodayRejectAuth int64   `json:"todayRejectAuth"` // 今日鉴权拒连（按本地自然日归零，M2）
 	HealthyProxies  int     `json:"healthyProxies"`  // 健康上游总数
 	TotalProxies    int     `json:"totalProxies"`    // 上游总数
 	UptimeSec       int64   `json:"uptimeSec"`       // 运行时长（秒）
@@ -83,11 +51,15 @@ func (a *App) handleDashboardOverview(c *gin.Context) {
 		return
 	}
 
-	// 实时速率（AC-5.5）：改用【内存累计字节】做采样差值，而非 SQLite 今日聚合。
-	// 为什么：SQLite 桶仅由 flush worker 每 5~10s 写一次，用它采样会让实时速率呈
-	// 「攒一波再跳一下」的锯齿、且滞后于真实流量；进程级 atomic 累计字节是即时、平滑、
-	// 与转发热路径解耦的真实瞬时来源。SQLite 仅保留历史/今日汇总用途。
-	upRate, downRate := a.rate.sample(rt.TotalUpBytes, rt.TotalDownBytes)
+	// 实时速率（AC-5.5）：P4——改读由 flush worker 固定周期采样好的速率，不再在每次请求间差分。
+	// 旧实现（a.rate.sample）把速率耦合到仪表盘轮询节奏：不轮询则无速率、多标签页并发互相
+	// 污染基线。现由 stats.Counter 在 flush 周期内对累计字节差分一次、存入 atomic，本处只读。
+	upRate := float64(rt.UpRateBps)
+	downRate := float64(rt.DownRateBps)
+
+	// 今日拒连（M2）：改读 Counter 的【今日】计数（按本地自然日归零），不再用进程累计瞬时值。
+	// 拒连不落 SQLite 时间桶，故无法像今日流量那样从库聚合；Counter 内维护今日计数 + 跨日归零。
+	todayRejRule, todayRejAuth := a.stats.TodayRejects()
 
 	// 健康上游汇总（内存快照）。
 	snap := a.holder.Load()
@@ -114,8 +86,8 @@ func (a *App) handleDashboardOverview(c *gin.Context) {
 		TodayUp:         totals.UpBytes,
 		TodayDown:       totals.DownBytes,
 		TodayReq:        totals.ReqCount,
-		TodayRejectRule: rt.RejectRule,
-		TodayRejectAuth: rt.RejectAuth,
+		TodayRejectRule: todayRejRule,
+		TodayRejectAuth: todayRejAuth,
 		HealthyProxies:  healthy,
 		TotalProxies:    total,
 		UptimeSec:       int64(time.Since(a.startedAt).Seconds()),

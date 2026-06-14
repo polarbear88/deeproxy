@@ -123,6 +123,7 @@ func (r *connectRule) Allow(ctx context.Context, req *socks5.Request) (context.C
 	switch action {
 	case rule.ActionReject:
 		r.counter.IncRejectRule()
+		r.counter.IncActionReject() // M1：同时计入动作分布，使饼图 reject 占比不再恒为 0
 		r.logger.Info("规则拒绝", "host", host, "action", "reject", "group", dec.Group)
 		return ctx, false
 	case rule.ActionForward, rule.ActionDirect:
@@ -164,6 +165,10 @@ var errNoUpstreamSource = errors.New("Type A 无尾段上游来源，无法 forw
 
 // connectHandle 接管 CONNECT：根据 Allow 阶段的判定执行拨号、嗅探、回复与中继。
 func (h *handler) connectHandle(ctx context.Context, writer io.Writer, req *socks5.Request) error {
+	// C2：握手已成功（CONNECT 已解析到此），清除 accept 时设的握手读截止时间，
+	// 否则它会在后续嗅探/中继读取时误触发超时（中继空闲超时另由 idleConn 负责）。
+	clearHandshakeDeadline(writer)
+
 	d, ok := ctx.Value(decisionKey).(decision)
 	if !ok {
 		// 正常路径一定经过 Allow；缺判定说明流程异常。
@@ -265,7 +270,21 @@ func (h *handler) dialAndRelay(ctx context.Context, writer io.Writer, req *socks
 	return relErr
 }
 
-// dialWithFailover 执行拨号；Type B forward 在拨号失败时自动重试下一个健康上游（AC-4）。
+// maxFailoverTry 是 Type B 故障转移的【最大拨号尝试次数上限】（H2）。
+//
+// 为什么必须有上限：原实现对整组每个健康节点都重试一次（maxTry=len(healthy)）。
+// 当组内有大量「TCP 可连但建立后挂起」的死节点时，单条客户端连接会顺序耗尽
+// dialTimeout(10s)×N，最坏占用一个 goroutine + fd 长达 N×10s（如 20 节点=200s），
+// 即便客户端早已放弃。这是放大型资源耗尽风险。故把单连接的拨号尝试封顶为本值，
+// 多于此数的健康节点不在本连接内继续试（SWRR 已保证每连接起点轮转，整体仍均摊到全池）。
+const maxFailoverTry = 3
+
+// failoverBudget 是单条连接【全部故障转移拨号合计】的墙钟预算（H2）。
+//
+// 即便尝试次数未达上限，也用此预算给整个拨号阶段一个总截止：派生带 deadline 的 ctx
+// 传给 dialer，任一节点拨号都受其约束，避免少数慢节点累计拖垮单连接的拨号阶段。
+const failoverBudget = 25 * time.Second
+
 //
 // 故障转移语义（AC-4）：
 //   - 仅在【拨号阶段】重试；一旦 success 回复并开始中继，连接中途断开不重试（避免重复中继数据）。
@@ -291,6 +310,15 @@ func (h *handler) dialWithFailover(ctx context.Context, d decision, target strin
 		if maxTry == 0 {
 			return nil, nil, pool.ErrNoUpstream // 整组全挂（G6）
 		}
+		// H2：单连接拨号尝试封顶，避免大量死节点时 N×dialTimeout 长时间占用 goroutine+fd。
+		if maxTry > maxFailoverTry {
+			maxTry = maxFailoverTry
+		}
+		// H2：给整个故障转移拨号阶段一个总墙钟预算（派生带 deadline 的 ctx 传给 dialer），
+		// 避免少数慢节点累计拖垮单连接的拨号阶段。中继阶段不用此 ctx（其超时由 idleConn 负责）。
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, failoverBudget)
+		defer cancel()
 	}
 
 	var lastErr error
@@ -350,6 +378,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 	if action == rule.ActionReject {
 		// 已回过 success，无法再回 0x02；只能关闭连接。
 		h.counter.IncRejectRule()
+		h.counter.IncActionReject() // M1：嗅探后 reject 也计入动作分布
 		h.logger.Info("嗅探后规则拒绝，关闭连接", "host", routeHost)
 		return errSniffReject
 	}
@@ -511,9 +540,10 @@ func New(
 
 	return socks5.NewServer(
 		socks5.WithCredential(auth.NewCredentialWithLogger(provider, logger)), // 强制认证 + v2 鉴权（失败即拒）；注入 logger 打未授权日志（AC-1.5）
-		socks5.WithRule(cr),                                 // 策略判定：reject/非CONNECT 回 0x02
-		socks5.WithResolver(nopResolver{}),                  // 跳过本地 DNS，防泄漏
-		socks5.WithConnectHandle(h.connectHandle),           // 接管 connect：拨号/嗅探/中继
+		socks5.WithRule(cr),                       // 策略判定：reject/非CONNECT 回 0x02
+		socks5.WithResolver(nopResolver{}),        // 跳过本地 DNS，防泄漏
+		socks5.WithConnectHandle(h.connectHandle), // 接管 connect：拨号/嗅探/中继
+		socks5.WithGPool(recoverPool{logger: logger}), // C1：每连接 goroutine panic 兜底，防单连接 panic 崩溃整进程
 		socks5.WithLogger(newSocksLogger(logger)),
 	)
 }

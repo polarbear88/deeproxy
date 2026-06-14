@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
-	"time"
 
 	// 纯 Go SQLite 驱动（免 CGO），保证 CGO_ENABLED=0 跨平台静态编译单二进制（D1-A）。
 	_ "modernc.org/sqlite"
@@ -31,6 +30,7 @@ type Store struct {
 	db      *sql.DB
 	writeCh chan writeOp  // 写任务队列
 	closed  chan struct{} // 关闭信号
+	wdone   chan struct{} // 单写协程已退出（排空完成）信号（H1 确定性关闭）
 	once    sync.Once     // 保证 Close 只执行一次
 }
 
@@ -73,6 +73,7 @@ func Open(path string) (*Store, error) {
 		db:      db,
 		writeCh: make(chan writeOp, 256), // 带缓冲，吸收统计 flush 等突发写
 		closed:  make(chan struct{}),
+		wdone:   make(chan struct{}),
 	}
 
 	// 先启动单写协程：migrate 经 Write 投递到该协程串行执行，必须先有消费者，
@@ -89,13 +90,15 @@ func Open(path string) (*Store, error) {
 }
 
 // writeLoop 是单写协程主体：顺序消费写任务，串行执行，避免写锁竞争。
+// 退出前（收到 closed 信号）排空 writeCh 中剩余写任务，再关闭 wdone 通知 Close 排空已完成。
 func (s *Store) writeLoop() {
+	defer close(s.wdone) // 排空结束，通知 Close 可以安全关闭 db（H1 确定性关闭）
 	for {
 		select {
 		case op := <-s.writeCh:
 			op.done <- op.fn(s.db)
 		case <-s.closed:
-			// 关闭前排空剩余写任务，避免调用方永久阻塞在 done。
+			// 关闭前排空剩余写任务，避免调用方永久阻塞在 done、且不丢已投递的尾部写。
 			for {
 				select {
 				case op := <-s.writeCh:
@@ -149,12 +152,14 @@ func (s *Store) DB() *sql.DB {
 }
 
 // Close 停止单写协程并关闭数据库连接（幂等）。
+//
+// H1：用 wdone 信号【确定性】等待单写协程排空 writeCh 中所有尾部写后再关闭 db，
+// 替代旧的 time.Sleep(10ms) 经验式等待——后者在尾部写较多时会丢写或在写到一半时关库。
 func (s *Store) Close() error {
 	var err error
 	s.once.Do(func() {
-		close(s.closed)
-		// 给单写协程一点时间排空队列。
-		time.Sleep(10 * time.Millisecond)
+		close(s.closed) // 通知单写协程进入排空-退出流程
+		<-s.wdone       // 等其排空全部尾部写并退出（确定性，不再用 sleep）
 		err = s.db.Close()
 	})
 	return err

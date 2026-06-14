@@ -234,6 +234,12 @@ var schemaStmts = []string{
 	);`,
 	// 按时间的辅助索引：清理过期行与时间窗口聚合查询（仪表盘 1h/24h/7d）走它。
 	`CREATE INDEX IF NOT EXISTS idx_stat_bucket ON traffic_stat(bucket_time);`,
+	// P3：Top 分组/用户排行的复合索引。QueryTopGroups/QueryTopUsers 在 [start,end)
+	// 窗口内按 group_id / user_id 分组聚合 SUM(流量)；(group_id,bucket_time) /
+	// (user_id,bucket_time) 让「时间范围扫描 + 分组聚合」可借索引有序定位，
+	// 避免大表全扫 + 临时聚合（高基数/长保留期时显著）。
+	`CREATE INDEX IF NOT EXISTS idx_stat_group_bucket ON traffic_stat(group_id, bucket_time);`,
+	`CREATE INDEX IF NOT EXISTS idx_stat_user_bucket ON traffic_stat(user_id, bucket_time);`,
 
 	// 目标域名命中聚合桶（Top 目标域名特性）：与 traffic_stat 同构的分钟桶模型。
 	//   - key = 完整主机名（含子域，www.x.com 与 mail.x.com 分开计数）；纯 IP 目标也作为 key 计入。
@@ -248,6 +254,10 @@ var schemaStmts = []string{
 	);`,
 	// 按时间的辅助索引：保留期清理与时间窗口 Top 聚合查询走它（与 idx_stat_bucket 同理）。
 	`CREATE INDEX IF NOT EXISTS idx_domain_hit_bucket ON domain_hit(bucket_time);`,
+	// P3：Top 目标域名排行的复合索引。QueryTopDomains 在 [start,end) 窗口内按 domain
+	// 分组聚合 SUM(hit_count)，可选 group_id 过滤。(bucket_time,domain) 让时间范围扫描
+	// 直接产出按 domain 局部聚合所需的数据，缓解高域名基数下的全扫 + 哈希聚合开销。
+	`CREATE INDEX IF NOT EXISTS idx_domain_hit_bucket_domain ON domain_hit(bucket_time, domain);`,
 }
 
 // seedSystemSetting 确保系统设置单行存在（首次建库时插入默认行；已存在则忽略）。

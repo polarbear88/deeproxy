@@ -222,6 +222,9 @@ func (a *App) handleDeleteGroup(c *gin.Context) {
 	if !a.rebuildAndSwap(c) {
 		return
 	}
+	// M5：分组已删除，回收其 SWRR 选择器状态，避免注册表残留无界增长。
+	// 放在 rebuildAndSwap 之后：此刻新快照已不含该组，转发侧不会再 For 到它而重建。
+	a.registry.Remove(id)
 	a.logger.Info("删除分组", "id", id)
 	respondOK(c, nil)
 }

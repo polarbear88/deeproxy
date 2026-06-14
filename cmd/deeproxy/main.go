@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"deeproxy/api"
 	"deeproxy/config"
@@ -172,11 +173,12 @@ Examples:
 	counter := stats.NewCounter()
 
 	// 健康检查器：探测翻转后经 refresher 触发快照重建+原子替换，刷新 HealthyUpstreams。
-	// refresher 是闭包适配 SnapshotRefresher（Refresh() error）→ snapbuild.RebuildAndSwap（DRY）。
-	refresher := refresherFunc(func() error {
+	// P2：健康翻转的重建经【去抖刷新器】合并——一段静默窗口内的多次翻转只触发一次全量重建，
+	// 避免大池/频繁抖动时相邻全量 Rebuild 造成的 CPU + rebuildMu 锁竞争。API 写仍走同步重建。
+	debounced := newDebouncedRefresher(func() error {
 		return snapbuild.RebuildAndSwap(holder, st, cfg)
-	})
-	healthChecker := health.NewHealthChecker(st, health.NewNetProber(), refresher, logger)
+	}, 2*time.Second, logger)
+	healthChecker := health.NewHealthChecker(st, health.NewNetProber(), debounced, logger)
 
 	// 统计 flush + 过期清理 worker（保留期来自系统设置）。
 	flusher := flush.NewFlusher(counter, st, logger, flush.WithRetentionDays(ss.StatRetentionDays))
@@ -188,9 +190,10 @@ Examples:
 	// 启动后台 worker（旁路，不阻塞转发）。
 	go healthChecker.Run(ctx)
 	go flusher.Run(ctx)
+	go debounced.run(ctx) // P2：去抖刷新循环（合并健康翻转触发的全量重建）
 
 	// 装配管理后台（Gin + embed 前端，独立端口）。levelVar 传入以便后台改日志级别时热生效。
-	app := api.NewApp(st, holder, cfg, counter, logBuf, auditBuf, healthChecker, logger, levelVar, version)
+	app := api.NewApp(st, holder, cfg, counter, logBuf, auditBuf, healthChecker, registry, logger, levelVar, version)
 	adminErr := make(chan error, 1)
 	go func() {
 		logger.Info("管理后台启动", "listen", cfg.AdminListen)
@@ -198,17 +201,24 @@ Examples:
 	}()
 
 	// 装配 SOCKS5 中继服务（读 atomic 快照；空闲/嗅探/默认动作均从快照动态读）。
+	// C2：用 server.Listen 创建【带握手读超时】的监听器（防 slowloris 半开连接泄漏），
+	// 同时持有该 listener 句柄以便优雅关闭时主动关闭、停止接受新连接（H1）。
 	srv := server.New(holder, registry, counter, auditBuf, logger)
+	socksLn, err := server.Listen("tcp", cfg.Listen)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SOCKS5 服务监听失败 %q: %v\n", cfg.Listen, err)
+		os.Exit(1)
+	}
 	socksErr := make(chan error, 1)
 	go func() {
 		logger.Info("SOCKS5 服务启动", "listen", cfg.Listen)
-		socksErr <- srv.ListenAndServe("tcp", cfg.Listen)
+		socksErr <- srv.Serve(socksLn)
 	}()
 
 	// ⑧ 等待信号或任一服务致命错误。
 	select {
 	case <-ctx.Done():
-		logger.Info("收到退出信号，正在关闭…")
+		logger.Info("收到退出信号，正在优雅关闭…")
 	case err := <-socksErr:
 		fmt.Fprintf(os.Stderr, "SOCKS5 服务运行失败: %v\n", err)
 		os.Exit(1)
@@ -216,9 +226,25 @@ Examples:
 		fmt.Fprintf(os.Stderr, "管理后台运行失败: %v\n", err)
 		os.Exit(1)
 	}
+
+	// ⑨ 优雅关闭（H1）：有序拆除，尽量不丢在途请求与尾部统计。
+	//  1. 关 SOCKS 监听：停止接受新中继连接（已建立的中继由其自身 idle/连接结束自然收尾）。
+	//  2. Shutdown 管理后台：等在途 HTTP 请求在超时内收尾（SSE 长连接会被关闭）。
+	//  3. stop()：解除 signal 通知；ctx 已 Done，后台 worker（健康/flush/去抖）随之退出，
+	//     flush worker 退出前会做最后一次 flush，落下尾部统计增量。
+	//  4. 关 store：确定性排空单写协程队列后关库（见 store.Close），避免丢写/WAL 未收尾。
+	_ = socksLn.Close()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := app.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("管理后台优雅关闭超时/出错", "err", err)
+	}
+
+	stop()                              // 解除信号捕获；ctx 已取消，后台 worker 开始退出
+	time.Sleep(200 * time.Millisecond) // 给 flush worker 的「退出前最后一次 flush」一点落库窗口
+	if err := st.Close(); err != nil {  // 确定性排空写队列后关库
+		logger.Warn("关闭数据库出错", "err", err)
+	}
+	logger.Info("已优雅关闭")
 }
-
-// refresherFunc 把函数适配为 health.SnapshotRefresher（Refresh() error）。
-type refresherFunc func() error
-
-func (f refresherFunc) Refresh() error { return f() }

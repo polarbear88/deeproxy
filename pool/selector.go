@@ -134,3 +134,14 @@ func (r *Registry) For(groupID int64) *Selector {
 	}
 	return sel
 }
+
+// Remove 删除分组 groupID 的 Selector（M5：分组被删除时回收其 SWRR 状态，防注册表无界增长）。
+//
+// 为什么需要：For 惰性创建的 Selector 长生命周期复用，但分组删除后从无回收路径，
+// 每个曾出现过的 Type B 分组会永久残留一个 Selector{map}。虽单条占用极小，但分组频繁
+// 增删时累积成有界泄漏。删除分组的管理 handler 调用本方法即可清理。幂等：不存在则无操作。
+func (r *Registry) Remove(groupID int64) {
+	r.mu.Lock()
+	delete(r.selectors, groupID)
+	r.mu.Unlock()
+}
