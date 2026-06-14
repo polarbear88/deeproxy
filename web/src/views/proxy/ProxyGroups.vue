@@ -22,12 +22,12 @@ const groupDialog = reactive({ visible: false, isEdit: false, form: null })
 // 组件⑦：分组名输入校验。仅 ^[A-Za-z0-9]+$（与后端 ValidIdentifier 同规则），
 // 编辑态名字仍可改，故新建/编辑都会触发该校验。
 const groupFormRef = ref(null)
-const groupRules = {
+const groupRules = computed(() => ({
   name: [
     { required: true, message: t('validate.required'), trigger: 'blur' },
     { pattern: /^[A-Za-z0-9]+$/, message: t('validate.alnum'), trigger: 'blur' },
   ],
-}
+}))
 function emptyGroupForm() {
   return {
     id: null,

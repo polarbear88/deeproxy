@@ -128,6 +128,7 @@ export default {
     axisReq: 'Requests',
     // Runtime health
     runHealth: 'Runtime Health',
+    version: 'Version',
     memMB: 'Process Memory',
     uptime: 'Uptime',
     healthyProxies: 'Healthy Proxy Overview',
@@ -206,6 +207,34 @@ export default {
   validate: {
     alnum: 'Only letters and digits allowed',
     required: 'This field is required',
+    usernameRequired: 'Please enter the admin username',
+    passwordRequired: 'Please enter the password',
+    setupUsernameRequired: 'Please set the admin username',
+    setupPasswordRequired: 'Please set the password',
+    passwordMin: 'Password must be at least 6 characters',
+    confirmRequired: 'Please re-enter the password',
+    passwordMismatch: 'The two passwords do not match',
+  },
+  // Login / first-time setup page text (auth group, i18n)
+  auth: {
+    // Login page
+    loginBrandTitle: 'deeproxy Console',
+    loginBrandSub: 'SOCKS5 Relay Admin',
+    usernamePlaceholder: 'Admin username',
+    passwordPlaceholder: 'Password',
+    loginBtn: 'Sign In',
+    loginOk: 'Signed in',
+    // First-time setup page
+    setupTitle: 'First-time Setup',
+    setupSub: 'Set the admin username and password',
+    setupUsernameLabel: 'Admin Username',
+    setupUsernamePlaceholder: 'Set admin username',
+    setupPasswordLabel: 'Password',
+    setupPasswordPlaceholder: 'Set password (min 6 chars)',
+    setupConfirmLabel: 'Confirm Password',
+    setupConfirmPlaceholder: 'Re-enter password',
+    setupBtn: 'Complete Setup',
+    setupOk: 'Setup complete, please sign in',
   },
   // Rules page text (component ②, full AC-2.5)
   rules: {

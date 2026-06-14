@@ -66,6 +66,8 @@ type overviewResp struct {
 	ServerAddr string `json:"serverAddr"` // 服务器域名/IP（设置值优先，空则回探测的本机 IPv4）
 	Socks5Port int    `json:"socks5Port"` // 本地 SOCKS5 监听端口
 	WebPort    int    `json:"webPort"`    // Web 后台监听端口
+
+	Version string `json:"version"` // deeproxy 构建版本号（健康卡片展示，编译期 ldflags 注入）
 }
 
 // handleDashboardOverview 返回实时+今日扁平概览（AC-24）。
@@ -120,6 +122,7 @@ func (a *App) handleDashboardOverview(c *gin.Context) {
 		ServerAddr:      serverAddr,
 		Socks5Port:      portOf(a.cfg.Listen),
 		WebPort:         portOf(a.cfg.AdminListen),
+		Version:         a.version,
 	})
 }
 
@@ -252,7 +255,11 @@ func (a *App) handleTop(c *gin.Context) {
 			}
 			groupID = id
 		}
-		tops, err := a.store.QueryTopDomains(dayStart, end, limit, groupID)
+		// 可选 ?window=24h|7d：目标域名卡片支持滚动时间窗（默认 24h）。
+		// 与 group/user 的「今日 dayStart→now」不同，domain 用「now-dur→now」滚动窗，
+		// 这样 7d 能跨自然日聚合命中（缺省/非法值兜底 24h，避免对该卡片报 400）。
+		domainStart := end.Add(-parseTopDomainWindow(c))
+		tops, err := a.store.QueryTopDomains(domainStart, end, limit, groupID)
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, "读取 Top 域名失败: "+err.Error())
 			return
@@ -321,5 +328,20 @@ func parseWindow(c *gin.Context) (dur time.Duration, downsampleHour bool, ok boo
 	default:
 		respondError(c, http.StatusBadRequest, "window 非法（应为 1h/24h/7d）")
 		return 0, false, false
+	}
+}
+
+// parseTopDomainWindow 解析 Top 目标域名卡片的滚动时间窗，仅支持 24h / 7d，默认 24h。
+//
+// 与 parseWindow 不同：① 只接受 24h/7d 两档（该卡片需求）；② 缺省或非法值不报 400，
+// 而是兜底 24h——因为该卡片是仪表盘常驻区，宁可降级到默认窗也不让整张卡片报错。
+func parseTopDomainWindow(c *gin.Context) time.Duration {
+	switch c.Query("window") {
+	case "7d":
+		return 7 * 24 * time.Hour
+	case "24h":
+		return 24 * time.Hour
+	default:
+		return 24 * time.Hour // 缺省/非法 → 默认 24h
 	}
 }

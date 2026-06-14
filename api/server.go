@@ -48,6 +48,7 @@ type App struct {
 	levelVar  *slog.LevelVar // 日志级别变量：后台改 log_level 时对它 Set 原子热生效（不重启）
 	startedAt time.Time    // 进程启动时间（仪表盘 uptime 计算）
 	rate      *rateSampler // 仪表盘上/下行速率采样器（API 层算差值）
+	version   string       // 构建版本号（由 cmd 注入，仪表盘健康卡片展示）
 }
 
 // NewApp 构建管理后端容器。各依赖由 cmd 装配阶段（阶段9）注入。
@@ -61,6 +62,7 @@ func NewApp(
 	health *health.HealthChecker,
 	logger *slog.Logger,
 	levelVar *slog.LevelVar,
+	version string,
 ) *App {
 	if logger == nil {
 		logger = slog.Default()
@@ -68,6 +70,10 @@ func NewApp(
 	if levelVar == nil {
 		// 测试或调用方未注入时兜底，避免后台改日志级别时空指针。
 		levelVar = new(slog.LevelVar)
+	}
+	if version == "" {
+		// 测试或未注入时兜底为 dev，与 main 包默认值语义一致。
+		version = "dev"
 	}
 	return &App{
 		store:     st,
@@ -83,6 +89,7 @@ func NewApp(
 		levelVar:  levelVar,
 		startedAt: time.Now(),
 		rate:      &rateSampler{},
+		version:   version,
 	}
 }
 

@@ -30,6 +30,7 @@ const overview = ref({
   healthyProxies: 0,
   totalProxies: 0,
   uptimeSec: 0,
+  version: '',
 })
 // 服务端连接信息（专用端点 GET /settings/server-info，camelCase）：
 // SOCKS5 监听端口、Web 管理端口、对外地址，供首页端口展示与连接示例使用。
@@ -41,6 +42,8 @@ const actionDist = ref([])
 const topGroups = ref([])
 const topUsers = ref([])
 const topDomains = ref([])
+// Top 目标域名卡片独立时间窗（24h/7d，默认 24h；与上方流量图 timeWindow 解耦）。
+const domainWindow = ref('24h')
 
 const themeStore = useThemeStore()
 
@@ -106,19 +109,27 @@ async function loadActionDist() {
   }
 }
 async function loadTop() {
-  // Top 分组、Top 用户、Top 目标域名均已落地真实数据。
+  // Top 分组、Top 用户：固定「今日」窗口，随上方流量图时间窗刷新一并加载。
   try {
-    const [g, u, d] = await Promise.all([
+    const [g, u] = await Promise.all([
       dashApi.getTopN({ kind: 'group', limit: 5 }),
       dashApi.getTopN({ kind: 'user', limit: 5 }),
-      dashApi.getTopN({ kind: 'domain', limit: 10 }),
     ])
     topGroups.value = g || []
     topUsers.value = u || []
-    topDomains.value = d || []
   } catch {
     topGroups.value = []
     topUsers.value = []
+  }
+}
+
+// loadTopDomains 独立加载 Top 目标域名，使用卡片自己的 domainWindow（24h/7d）。
+// 与 loadTop 拆开：切换该卡片时间窗时只刷新这一张卡片，不波及分组/用户表。
+async function loadTopDomains() {
+  try {
+    const d = await dashApi.getTopN({ kind: 'domain', limit: 10, window: domainWindow.value })
+    topDomains.value = d || []
+  } catch {
     topDomains.value = []
   }
 }
@@ -219,6 +230,7 @@ onMounted(() => {
   loadServerInfo()
   loadRuntime()
   reloadByWindow()
+  loadTopDomains()
   realtimeTimer = setInterval(() => {
     loadOverview()
     loadRuntime()
@@ -313,6 +325,10 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex-between">
               <span>{{ t('dashboard.topDomains') }}</span>
+              <el-radio-group v-model="domainWindow" size="small" @change="loadTopDomains">
+                <el-radio-button value="24h">24h</el-radio-button>
+                <el-radio-button value="7d">7d</el-radio-button>
+              </el-radio-group>
             </div>
           </template>
           <EChart v-if="topDomains.length" :option="topDomainOption" height="240px" />
@@ -325,7 +341,12 @@ onBeforeUnmount(() => {
     <el-row :gutter="16" align="stretch">
       <el-col :xs="24" :lg="14">
         <el-card class="full-card">
-          <template #header><span>{{ t('dashboard.runHealth') }}</span></template>
+          <template #header>
+            <div class="flex-between">
+              <span>{{ t('dashboard.runHealth') }}</span>
+              <el-tag v-if="overview.version" type="info" effect="plain" size="small" round>{{ t('dashboard.version') }}: {{ overview.version }}</el-tag>
+            </div>
+          </template>
           <el-row :gutter="16">
             <el-col :span="8">
               <StatCard :title="t('dashboard.memMB')" :value="runtime.memMB" suffix="MB" icon="Cpu" color="#409eff" />

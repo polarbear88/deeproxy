@@ -4,7 +4,7 @@
 // - 授权与编辑彻底分离：编辑弹窗只管 用户名/密码/备注；授权由独立的"设置授权分组"按钮+弹窗承担。
 // - allGroups（授权全部代理组）是独立布尔标志，与 groupIds 精细授权并存，互不清空（后端语义）。
 // 代理用户仅能连 SOCKS5 代理，不能登录后台。
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import * as userApi from '@/api/user'
@@ -56,12 +56,12 @@ const dialog = reactive({ visible: false, isEdit: false, form: null })
 // 组件⑦：用户名输入校验。仅 ^[A-Za-z0-9]+$（与后端 ValidIdentifier 同规则）。
 // 编辑态 username 只读（:disabled），故该规则实际只在新建态触发。
 const userFormRef = ref(null)
-const userRules = {
+const userRules = computed(() => ({
   username: [
     { required: true, message: t('validate.required'), trigger: 'blur' },
     { pattern: /^[A-Za-z0-9]+$/, message: t('validate.alnum'), trigger: 'blur' },
   ],
-}
+}))
 function emptyForm() {
   return { id: null, username: '', password: '', remark: '' }
 }

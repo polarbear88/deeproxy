@@ -190,7 +190,7 @@ Examples:
 	go flusher.Run(ctx)
 
 	// 装配管理后台（Gin + embed 前端，独立端口）。levelVar 传入以便后台改日志级别时热生效。
-	app := api.NewApp(st, holder, cfg, counter, logBuf, auditBuf, healthChecker, logger, levelVar)
+	app := api.NewApp(st, holder, cfg, counter, logBuf, auditBuf, healthChecker, logger, levelVar, version)
 	adminErr := make(chan error, 1)
 	go func() {
 		logger.Info("管理后台启动", "listen", cfg.AdminListen)

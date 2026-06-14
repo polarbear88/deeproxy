@@ -131,6 +131,7 @@ export default {
     axisReq: '请求',
     // 运行健康
     runHealth: '运行健康',
+    version: '版本号',
     memMB: '进程内存',
     uptime: '运行时长',
     healthyProxies: '健康代理概览',
@@ -209,6 +210,34 @@ export default {
   validate: {
     alnum: '只能包含英文字母与数字',
     required: '此项为必填',
+    usernameRequired: '请输入管理员账号',
+    passwordRequired: '请输入密码',
+    setupUsernameRequired: '请设置管理员账号',
+    setupPasswordRequired: '请设置密码',
+    passwordMin: '密码至少 6 位',
+    confirmRequired: '请再次输入密码',
+    passwordMismatch: '两次输入的密码不一致',
+  },
+  // 登录页 / 首次设置页专有文案（auth 组，多语言）
+  auth: {
+    // 登录页
+    loginBrandTitle: 'deeproxy 控制台',
+    loginBrandSub: 'SOCKS5 中继管理后台',
+    usernamePlaceholder: '管理员账号',
+    passwordPlaceholder: '密码',
+    loginBtn: '登录',
+    loginOk: '登录成功',
+    // 首次设置页
+    setupTitle: '首次设置',
+    setupSub: '请设置后台管理员账号与密码',
+    setupUsernameLabel: '管理员账号',
+    setupUsernamePlaceholder: '设置管理员账号',
+    setupPasswordLabel: '密码',
+    setupPasswordPlaceholder: '设置密码（至少6位）',
+    setupConfirmLabel: '确认密码',
+    setupConfirmPlaceholder: '再次输入密码',
+    setupBtn: '完成设置',
+    setupOk: '设置成功，请登录',
   },
   // 规则页专有文案（组件②，AC-2.5 全量）
   rules: {

@@ -239,9 +239,9 @@ onMounted(loadSettings)
     </el-card>
 
     <!-- 下方一行两列：左「修改密码」，右「配置导入导出」 -->
-    <el-row :gutter="16">
+    <el-row :gutter="16" align="stretch">
       <el-col :xs="24" :lg="12">
-        <el-card class="dp-card-gap">
+        <el-card class="dp-card-gap full-card">
           <template #header><span>{{ t('settings.adminPassword') }}</span></template>
           <el-form label-width="110px">
             <el-form-item :label="t('settings.currentPassword')">
@@ -262,7 +262,7 @@ onMounted(loadSettings)
       </el-col>
 
       <el-col :xs="24" :lg="12">
-        <el-card class="dp-card-gap">
+        <el-card class="dp-card-gap full-card">
           <template #header><span>{{ t('settings.importExport') }}</span></template>
           <div class="ie-row">
             <el-button :icon="'Download'" @click="exportConfig">{{ t('settings.exportConfig') }}</el-button>
@@ -303,5 +303,10 @@ onMounted(loadSettings)
 }
 .ie-tip {
   margin-top: 14px;
+}
+/* 两卡片等高（修改管理员密码 / 配置导入导出）：el-row align=stretch 让两列等高，
+ * 卡片再 height:100% 填满列高，使两卡片底边对齐。*/
+.full-card {
+  height: 100%;
 }
 </style>

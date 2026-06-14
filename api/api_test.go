@@ -60,7 +60,7 @@ func testApp(t *testing.T) *App {
 	// 健康检查器注入 mock 探测桩（默认连通、10ms）。
 	health := health.NewHealthChecker(st, mockProber{result: health.ProbeResult{OK: true, Latency: 10 * time.Millisecond}}, noopRefresher{}, nil)
 
-	return NewApp(st, holder, cfg, counter, logs, audit, health, logger, nil)
+	return NewApp(st, holder, cfg, counter, logs, audit, health, logger, nil, "")
 }
 
 // doJSON 向 app.Router() 发一个 JSON 请求，返回响应。cookies 透传会话。
