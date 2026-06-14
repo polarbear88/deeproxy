@@ -223,15 +223,21 @@ func Rebuild(st *store.Store, cfg *config.Config) (*snapshot.Snapshot, error) {
 
 	// —— 4. 用户索引 + 授权集合 ——
 	usersByName := make(map[string]*snapshot.UserView, len(users))
+	// allGroupsUsers：物化「授权全部分组」通配用户集合（DEC-B1）。与逐组 authz 并存，
+	// IsAuthorized 命中此集合即对任意分组放行（覆盖未来新增分组）。
+	allGroupsUsers := make(map[int64]struct{})
 	for _, u := range users {
 		usersByName[u.Username] = &snapshot.UserView{ID: u.ID, Username: u.Username, Pwd: u.Pwd}
+		if u.AllGroups {
+			allGroupsUsers[u.ID] = struct{}{}
+		}
 	}
 	authz := make(map[snapshot.AuthzKey]struct{}, len(groupUsers))
 	for _, gu := range groupUsers {
 		authz[snapshot.NewAuthzKey(gu.GroupID, gu.UserID)] = struct{}{}
 	}
 
-	return snapshot.NewSnapshot(groupsByName, groupsByID, usersByName, authz, def, settings), nil
+	return snapshot.NewSnapshot(groupsByName, groupsByID, usersByName, authz, allGroupsUsers, def, settings), nil
 }
 
 // sortedRuleGroupsByScope 过滤出指定作用域的规则组并按 ID 升序返回（顺序稳定）。

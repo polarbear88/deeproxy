@@ -116,7 +116,13 @@ func (a *App) handleLogin(c *gin.Context) {
 
 	// 3) 成功：清限流、签发会话。
 	a.limiter.Reset(clientKey)
-	sid := a.sessions.Create()
+	sid, err := a.sessions.Create()
+	if err != nil {
+		// 随机源失败：绝不签发弱会话，回 500（极罕见，仅熵源异常时触发）。
+		a.logger.Error("签发会话失败（随机源异常）", "ip", clientKey, "err", err.Error())
+		respondError(c, http.StatusInternalServerError, "签发会话失败，请重试")
+		return
+	}
 	setSessionCookie(c, sid)
 	a.logger.Info("管理员登录成功", "ip", clientKey, "user", req.Username)
 	respondOK(c, nil)

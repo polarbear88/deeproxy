@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"deeproxy/domain"
@@ -236,5 +239,34 @@ func TestCredential_Valid(t *testing.T) {
 	var zero Credential
 	if zero.Valid("alice-gB", "correct-pwd", "1.2.3.4:5") {
 		t.Fatal("零值 Credential 应拒连")
+	}
+}
+
+// TestCredential_UnauthorizedGroupLog 验证 AC-1.5（T1.3）：仅「用户存在但未授权访问分组」
+// 在 Credential.Valid 打结构化日志，含 user/group；其它失败（密码错）不打该日志。
+func TestCredential_UnauthorizedGroupLog(t *testing.T) {
+	snap := newFakeSnap()
+	snap.groups["gC"] = GroupInfo{ID: 30, Type: domain.TypeA} // alice 未被授权 gC
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	c := NewCredentialWithLogger(func() SnapshotView { return snap }, logger)
+
+	// 未授权分组：应拒连且打日志，日志含 user=alice、group=gC。
+	if c.Valid("alice-gC", "correct-pwd", "1.2.3.4:5") {
+		t.Fatal("未授权分组应拒连")
+	}
+	logStr := buf.String()
+	if !strings.Contains(logStr, "未授权") || !strings.Contains(logStr, "alice") || !strings.Contains(logStr, "gC") {
+		t.Fatalf("未授权日志应含 user/group，实际: %q", logStr)
+	}
+
+	// 密码错误：不应打「未授权」日志（避免对外暴露可枚举信息、避免重复日志）。
+	buf.Reset()
+	if c.Valid("alice-gB", "wrong-pwd", "1.2.3.4:5") {
+		t.Fatal("密码错误应拒连")
+	}
+	if strings.Contains(buf.String(), "未授权") {
+		t.Fatalf("密码错误不应打未授权日志，实际: %q", buf.String())
 	}
 }

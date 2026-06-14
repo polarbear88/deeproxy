@@ -3,6 +3,33 @@
 import * as echarts from 'echarts'
 import { useThemeStore } from '@/stores/theme'
 
+// 自定义暗色主题名（区别于内置 'dark'，便于显式控制背景/文本/轴线配色）。
+const DARK_THEME = 'deeproxy-dark'
+
+// 注册暗色主题：背景设为透明（随 el-card 暗色背景走，避免图表出现突兀的纯黑块），
+// 文本/轴线/分割线统一用暗色面板下可读的中性灰，保证与 Element Plus 暗色主题一致。
+// 模块级只注册一次，避免每次创建实例重复注册（DRY）。
+echarts.registerTheme(DARK_THEME, {
+  // 关键：透明背景，让图表融入卡片暗色背景，而非内置 dark 的 #100C2A 深紫块
+  backgroundColor: 'transparent',
+  textStyle: { color: 'rgba(255,255,255,0.85)' },
+  title: { textStyle: { color: 'rgba(255,255,255,0.92)' } },
+  legend: { textStyle: { color: 'rgba(255,255,255,0.75)' } },
+  // 折线/类目轴：轴线与刻度文本用中性灰，分割线降低对比避免刺眼
+  categoryAxis: {
+    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+    axisTick: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+    axisLabel: { color: 'rgba(255,255,255,0.65)' },
+    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+  },
+  valueAxis: {
+    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+    axisTick: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+    axisLabel: { color: 'rgba(255,255,255,0.65)' },
+    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+  },
+})
+
 export default {
   name: 'EChart',
   props: {
@@ -16,9 +43,15 @@ export default {
     let chart = null
     const themeStore = useThemeStore()
 
-    // 按当前主题创建实例（暗色用内置 'dark' 主题）
+    // 容器是否具备可见尺寸：keep-alive 隐藏页面时容器宽高为 0，
+    // 此时 init/resize 会得到 0 尺寸的错乱画布，需跳过等返回页面再处理。
+    function hasSize() {
+      return !!el.value && el.value.clientWidth > 0 && el.value.clientHeight > 0
+    }
+
+    // 按当前主题创建实例（暗色用自定义 'deeproxy-dark' 主题）
     function createChart() {
-      if (!el.value) return
+      if (!el.value || !hasSize()) return
       if (chart) {
         chart.dispose()
         chart = null
@@ -28,12 +61,22 @@ export default {
     }
 
     function resize() {
+      // 无尺寸时（隐藏态）不 resize，避免画布被压缩成 0 尺寸
+      if (!hasSize()) return
       chart && chart.resize()
     }
 
     onMounted(() => {
       createChart()
       window.addEventListener('resize', resize)
+    })
+
+    // keep-alive 复用：返回本页时 onMounted 不再触发。
+    // 若期间在别的页面切过主题，图表实例仍是旧主题且可能在隐藏（零尺寸）时被重建错乱，
+    // 这里在重新激活时重建实例 + resize，确保主题正确且尺寸贴合容器。
+    onActivated(() => {
+      createChart()
+      resize()
     })
 
     onBeforeUnmount(() => {
@@ -53,7 +96,9 @@ export default {
       { deep: true },
     )
 
-    // 主题切换时重建实例（ECharts 主题只能在 init 时指定）
+    // 主题切换时重建实例（ECharts 主题只能在 init 时指定）。
+    // 若当前页处于隐藏态（零尺寸），createChart 内部 hasSize 守卫会跳过，
+    // 待 onActivated 返回本页时再以正确主题重建，避免隐藏容器被错误初始化。
     watch(
       () => themeStore.isDark,
       () => {

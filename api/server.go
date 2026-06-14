@@ -124,6 +124,7 @@ func (a *App) Router() *gin.Engine {
 			auth.GET("/dashboard/action-dist", a.handleActionDist)     // 动作分布饼图
 			auth.GET("/dashboard/top", a.handleTop)                    // Top N group/user/domain
 			auth.GET("/dashboard/runtime", a.handleRuntime)            // 运行健康区(内存/goroutine/各组健康)
+			auth.GET("/feature-status", a.handleFeatureStatus)         // 权威功能状态表 T6.3
 
 			// 分组 CRUD AC-21
 			auth.GET("/groups", a.handleListGroups)
@@ -133,6 +134,8 @@ func (a *App) Router() *gin.Engine {
 			// 分组下的上游 CRUD（嵌套路径，Type B）AC-21/28
 			auth.GET("/groups/:id/upstreams", a.handleListUpstreams)
 			auth.POST("/groups/:id/upstreams", a.handleCreateUpstream)
+			auth.POST("/groups/:id/upstreams/batch", a.handleBatchCreateUpstreams)  // 批量添加 AC-3.1
+			auth.POST("/groups/:id/upstreams/bulk", a.handleBulkUpdateUpstreams)    // 批量改权重/启停 AC-3.4
 			auth.PUT("/groups/:id/upstreams/:uid", a.handleUpdateUpstream)
 			auth.DELETE("/groups/:id/upstreams/:uid", a.handleDeleteUpstream)
 			auth.POST("/groups/:id/upstreams/:uid/toggle", a.handleSetUpstreamEnabled) // 手动启停 AC-18
@@ -160,6 +163,7 @@ func (a *App) Router() *gin.Engine {
 			// 系统设置 + 改密 + 导入导出 AC-31/37/40
 			auth.GET("/settings", a.handleGetSettings)
 			auth.PUT("/settings", a.handleUpdateSettings)
+			auth.GET("/settings/server-info", a.handleServerInfo) // 监听端口+服务器地址（连接提示 T4.2）
 			auth.POST("/settings/admin-password", a.handleChangeAdminPassword) // 改密(校验旧密码)
 			auth.GET("/settings/export", a.handleExportConfig)
 			auth.POST("/settings/import", a.handleImportConfig)
@@ -194,6 +198,57 @@ func (a *App) rebuildAndSwap(c *gin.Context) bool {
 		// G4 回滚：保留旧快照、返回错误。记 Warn（配置写入但热替换失败，需关注）。
 		a.logger.Warn("配置快照重建失败，已回滚保留旧快照", "err", err.Error())
 		respondError(c, http.StatusInternalServerError, "配置已写入但快照重建失败（已回滚到旧配置）: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// validateRuleUpsert 实现 DEC-A1（AC-5.1）写前候选校验：在把一条规则 upsert 落库【之前】，
+// 用「当前已提交规则集 + 本次待写规则」构建候选全量并编译校验。校验通过返回 true（调用方继续写）；
+// 非法（坏 match/CIDR/action）返回 false 并已写 400 响应，调用方应直接 return，DB 不写。
+//
+// 为什么挡在写前：规则类坏配置一旦落库再 Rebuild 失败，DB 与转发快照会分裂（坏规则留库）。
+// 写前校验保证「规则编译类坏配置永不持久化」（Principle 1）。
+func (a *App) validateRuleUpsert(c *gin.Context, pending store.Rule) bool {
+	committed, err := a.store.ListAllRules()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取现有规则失败: "+err.Error())
+		return false
+	}
+	ruleGroups, err := a.store.ListRuleGroups()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取规则组失败: "+err.Error())
+		return false
+	}
+	ss, err := a.store.GetSystemSetting()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取系统设置失败: "+err.Error())
+		return false
+	}
+	cand := snapbuild.BuildCandidateRulesUpsert(committed, pending)
+	if err := snapbuild.ValidateRuleset(cand, ruleGroups, ss.DefaultAction); err != nil {
+		// 规则编译失败：挡在写前，返回 400（客户端输入非法），DB 不写、快照不分裂。
+		respondError(c, http.StatusBadRequest, "规则非法，已拒绝写入（配置未改动）: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// validateDefaultAction 校验「把全局默认动作改为 next 后」现有规则集仍能编译。
+// 默认动作非法时返回 false 并写 400。供系统设置写前调用，避免坏默认动作落库致分裂。
+func (a *App) validateDefaultAction(c *gin.Context, next string) bool {
+	committed, err := a.store.ListAllRules()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取现有规则失败: "+err.Error())
+		return false
+	}
+	ruleGroups, err := a.store.ListRuleGroups()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取规则组失败: "+err.Error())
+		return false
+	}
+	if err := snapbuild.ValidateRuleset(committed, ruleGroups, next); err != nil {
+		respondError(c, http.StatusBadRequest, "默认动作或现有规则非法，已拒绝写入（配置未改动）: "+err.Error())
 		return false
 	}
 	return true

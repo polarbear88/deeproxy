@@ -50,6 +50,18 @@ func parseQueryID(c *gin.Context, name string) (int64, bool) {
 	return id, true
 }
 
+// atoiDefault 把字符串解析为 int；空串或非法时返回 def（用于可选分页参数 page/pageSize）。
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
 // bindJSON 把请求体解析到 dst；失败时写入 400 并返回 ok=false。
 // 统一封装避免每个 handler 重复写错误处理（DRY）。
 func bindJSON(c *gin.Context, dst any) bool {

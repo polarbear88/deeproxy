@@ -6,10 +6,12 @@
 // - GET /dashboard/action-dist → [{name,value}]。
 // - GET /dashboard/top?kind=group|user|domain → group/user:[{name,bytes}]、domain:[{name,count}]。
 // - GET /dashboard/runtime → { memMB,goroutines,groups:[{id,name,healthy,total,allDown}] }。
-import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import EChart from '@/components/EChart.js'
 import StatCard from '@/components/StatCard.vue'
+import { useThemeStore } from '@/stores/theme'
 import * as dashApi from '@/api/dashboard'
+import { getServerInfo } from '@/api/system'
 import { formatBytes, formatRate, formatNumber, formatUptime } from '@/utils/format'
 
 const overview = ref({
@@ -25,6 +27,9 @@ const overview = ref({
   totalProxies: 0,
   uptimeSec: 0,
 })
+// 服务端连接信息（专用端点 GET /settings/server-info，camelCase）：
+// SOCKS5 监听端口、Web 管理端口、对外地址，供首页端口展示与连接示例使用。
+const serverInfo = ref({ serverAddr: '', socks5Port: 0, webPort: 0 })
 const runtime = ref({ memMB: 0, goroutines: 0, groups: [] })
 const timeWindow = ref('24h')
 const tsData = ref({ times: [], up: [], down: [], req: [] })
@@ -32,12 +37,42 @@ const actionDist = ref([])
 const topGroups = ref([])
 const topUsers = ref([])
 
+const themeStore = useThemeStore()
+
+// 饼图扇区描边色：Canvas 渲染器无法解析 CSS 变量（var(--el-bg-color)），
+// 必须在运行时读取计算后的真实色值，否则亮色下退化为黑边、暗色下不一致。
+// 随主题切换重新解析（toggle 会改 isDark）。
+const pieBorderColor = ref('#ffffff')
+function resolvePieBorderColor() {
+  // 从根元素读取 Element Plus 注入的 --el-bg-color 计算值（亮色白/暗色深灰）
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue('--el-bg-color')
+    .trim()
+  pieBorderColor.value = v || (themeStore.isDark ? '#141414' : '#ffffff')
+}
+// 主题切换后等 .dark 类与 CSS 变量更新到 DOM，再重新解析（nexttick 后变量才生效）
+watch(
+  () => themeStore.isDark,
+  () => {
+    requestAnimationFrame(resolvePieBorderColor)
+  },
+)
+
 let realtimeTimer = null
 
 async function loadOverview() {
   try {
     const d = await dashApi.getOverview()
     if (d) Object.assign(overview.value, d)
+  } catch {
+    /* ignore */
+  }
+}
+// 拉取服务端连接信息（专用端点，与概览解耦）。失败时保留默认零值，模板侧有兜底。
+async function loadServerInfo() {
+  try {
+    const d = await getServerInfo()
+    if (d) serverInfo.value = { serverAddr: d.serverAddr || '', socks5Port: d.socks5Port || 0, webPort: d.webPort || 0 }
   } catch {
     /* ignore */
   }
@@ -92,6 +127,20 @@ const healthRatio = computed(() => {
   return t === 0 ? 0 : Math.round((overview.value.healthyProxies / t) * 100)
 })
 
+// 对外地址：后端 server-info 给出 serverAddr 时优先用，否则回退到当前页面 host。
+const serverHost = computed(() => {
+  const a = (serverInfo.value.serverAddr || '').trim()
+  if (a) return a
+  return (typeof window !== 'undefined' && window.location.hostname) || '127.0.0.1'
+})
+
+// 真实 V2 连接示例：socks5://<user>-<group>:<pwd>@<server-addr>:<socks5-port>
+// 用占位 user/group/pwd，端口取真实监听端口，便于用户直接照抄替换。
+const connectionExample = computed(() => {
+  const port = serverInfo.value.socks5Port || 1080
+  return `socks5://alice-default:<密码>@${serverHost.value}:${port}`
+})
+
 const tsOption = computed(() => ({
   tooltip: { trigger: 'axis' },
   legend: { data: ['上行', '下行', '请求数'] },
@@ -117,7 +166,7 @@ const actionOption = computed(() => ({
       type: 'pie',
       radius: ['45%', '70%'],
       avoidLabelOverlap: true,
-      itemStyle: { borderRadius: 6, borderColor: 'var(--el-bg-color)', borderWidth: 2 },
+      itemStyle: { borderRadius: 6, borderColor: pieBorderColor.value, borderWidth: 2 },
       label: { show: false },
       data:
         actionDist.value.length > 0
@@ -132,7 +181,9 @@ const actionOption = computed(() => ({
 }))
 
 onMounted(() => {
+  resolvePieBorderColor()
   loadOverview()
+  loadServerInfo()
   loadRuntime()
   reloadByWindow()
   realtimeTimer = setInterval(() => {
@@ -238,9 +289,9 @@ onBeforeUnmount(() => {
     </el-row>
 
     <!-- 运行健康区 + 使用说明 -->
-    <el-row :gutter="16">
+    <el-row :gutter="16" align="stretch">
       <el-col :xs="24" :lg="14">
-        <el-card class="dp-card-gap">
+        <el-card class="full-card">
           <template #header><span>运行健康</span></template>
           <el-row :gutter="16">
             <el-col :span="8">
@@ -274,8 +325,21 @@ onBeforeUnmount(() => {
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="10">
-        <el-card>
+        <el-card class="full-card">
           <template #header><span>连接用户名格式说明</span></template>
+          <!-- 服务端监听信息 + 真实连接示例（AC-2.6 / AC-4.2） -->
+          <el-descriptions :column="1" border size="small" class="conn-ports">
+            <el-descriptions-item label="SOCKS5 监听端口">
+              <code>{{ serverInfo.socks5Port || '—' }}</code>
+              <span class="text-muted"> @ {{ serverHost }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="Web 管理端口">
+              <code>{{ serverInfo.webPort || '—' }}</code>
+            </el-descriptions-item>
+            <el-descriptions-item label="连接示例">
+              <code class="conn-example">{{ connectionExample }}</code>
+            </el-descriptions-item>
+          </el-descriptions>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="基本格式">
               <code>user-group</code>
@@ -303,6 +367,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
+/* 等高卡片（AC-2.1）：el-row align=stretch 已让两列等高，
+   卡片再填满列高，使「运行健康」与「连接说明」底边对齐 */
+.full-card {
+  height: 100%;
+}
 .el-progress {
   margin: 12px 0;
 }
@@ -314,6 +383,15 @@ onBeforeUnmount(() => {
 }
 .usage-tip {
   margin-top: 14px;
+}
+/* 端口/连接示例描述块与下方格式说明留出间距 */
+.conn-ports {
+  margin-bottom: 14px;
+}
+/* 连接示例可能较长，允许换行避免溢出卡片 */
+.conn-example {
+  word-break: break-all;
+  white-space: normal;
 }
 code {
   background: var(--el-fill-color-light);

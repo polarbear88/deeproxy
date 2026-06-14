@@ -109,6 +109,11 @@ type Snapshot struct {
 	// authz：授权集合，键为 "groupID:userID"，存在即已授权（O(1) 判定）。
 	authz map[AuthzKey]struct{}
 
+	// allGroupsUsers：开启「授权全部分组」通配标志的用户 ID 集合（DEC-B1）。
+	// 命中即对【任意】分组放行，与逐组 authz【并存】（独立标志，不互相清除）。
+	// 鉴权判定 = all_groups 命中 OR authz 精细命中（见 IsAuthorized）。
+	allGroupsUsers map[int64]struct{}
+
 	// defaultAction 是全局默认动作（规则全不命中时的最终兜底），来自配置引导。
 	defaultAction rule.Action
 
@@ -159,7 +164,17 @@ func (s *Snapshot) LookupUser(name string) (*UserView, bool) {
 }
 
 // IsAuthorized 判定 user 是否被授权访问 group（鉴权第三步，O(1)）。
+//
+// 判定语义（DEC-B1「并存」）：先查 all_groups 通配集合命中即放行（覆盖未来新增分组）；
+// 否则查逐组 authz 精细命中。两者独立并存——用户既可开 all_groups 又保留逐组授权，
+// 关掉 all_groups 后逐组授权仍生效。本函数被 Valid 阶段与 Allow(ParseOnly) 阶段共用，
+// 改这一处即两条鉴权路径同时生效，避免只在单路径短路导致的不一致。
 func (s *Snapshot) IsAuthorized(groupID, userID int64) bool {
+	// all_groups 通配标志命中：对任意分组放行。
+	if _, ok := s.allGroupsUsers[userID]; ok {
+		return true
+	}
+	// 逐组精细授权命中。
 	_, ok := s.authz[AuthzKey{GroupID: groupID, UserID: userID}]
 	return ok
 }

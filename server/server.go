@@ -508,7 +508,7 @@ func New(
 	}
 
 	return socks5.NewServer(
-		socks5.WithCredential(auth.NewCredential(provider)), // 强制认证 + v2 鉴权（失败即拒）
+		socks5.WithCredential(auth.NewCredentialWithLogger(provider, logger)), // 强制认证 + v2 鉴权（失败即拒）；注入 logger 打未授权日志（AC-1.5）
 		socks5.WithRule(cr),                                 // 策略判定：reject/非CONNECT 回 0x02
 		socks5.WithResolver(nopResolver{}),                  // 跳过本地 DNS，防泄漏
 		socks5.WithConnectHandle(h.connectHandle),           // 接管 connect：拨号/嗅探/中继

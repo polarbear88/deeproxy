@@ -20,8 +20,87 @@ func (s *Store) migrate() error {
 		if _, err := db.Exec(seedSystemSetting); err != nil {
 			return fmt.Errorf("初始化系统设置行失败: %w", err)
 		}
+		// 对旧库做幂等列迁移（新增列）。必须在 seed 之后，保证 system_setting 行已存在。
+		if err := migrateColumns(db); err != nil {
+			return fmt.Errorf("列迁移失败: %w", err)
+		}
 		return nil
 	})
+}
+
+// columnMigration 描述一条「为已有表新增列」的幂等迁移。
+type columnMigration struct {
+	table  string // 目标表名
+	column string // 列名
+	ddl    string // 完整的 ALTER TABLE ... ADD COLUMN 语句
+}
+
+// pendingColumnMigrations 是 v2 批量增强需要为旧库补充的列。
+//
+// 为什么需要这一层：原 migrate() 只跑 CREATE TABLE IF NOT EXISTS，对已存在的旧库
+// 不会补新列；而裸 ALTER TABLE ADD COLUMN 在列已存在时（二次启动）会直接报错。
+// 故先用 columnExists 守卫，再幂等执行；逐列独立，单列失败不影响其余列（下次重启续加）。
+var pendingColumnMigrations = []columnMigration{
+	// proxy_user.all_groups：用户级「授权全部分组」通配标志（DEC-B1）。
+	{table: "proxy_user", column: "all_groups",
+		ddl: `ALTER TABLE proxy_user ADD COLUMN all_groups INTEGER NOT NULL DEFAULT 0`},
+	// system_setting.server_addr：后台展示用的服务器域名/IP（仅作连接示例文案，非绑定地址）。
+	{table: "system_setting", column: "server_addr",
+		ddl: `ALTER TABLE system_setting ADD COLUMN server_addr TEXT NOT NULL DEFAULT ''`},
+	// system_setting.probe_pool_size：健康检查全局协程池大小（DEC-C1，默认 150）。
+	{table: "system_setting", column: "probe_pool_size",
+		ddl: `ALTER TABLE system_setting ADD COLUMN probe_pool_size INTEGER NOT NULL DEFAULT 150`},
+}
+
+// migrateColumns 逐条幂等地为旧库补齐新增列。
+//
+// 在单写协程内执行（由 migrate 调用），与运行期写串行，无并发问题。
+func migrateColumns(db *sql.DB) error {
+	for _, m := range pendingColumnMigrations {
+		exists, err := columnExists(db, m.table, m.column)
+		if err != nil {
+			return fmt.Errorf("检查列 %s.%s 是否存在失败: %w", m.table, m.column, err)
+		}
+		if exists {
+			continue // 已存在则跳过，保证幂等（二次启动不报错）
+		}
+		if _, err := db.Exec(m.ddl); err != nil {
+			return fmt.Errorf("新增列 %s.%s 失败: %w\nSQL: %s", m.table, m.column, err, m.ddl)
+		}
+	}
+	return nil
+}
+
+// columnExists 通过 PRAGMA table_info 判断指定表是否已含某列。
+//
+// 为什么用 PRAGMA 而非捕获 ALTER 报错：PRAGMA table_info 是 SQLite 标准内省方式，
+// 干净、可移植；裸跑 ADD COLUMN 靠捕获报错来判重则脆弱（错误文案随版本变化）。
+// table 名直接拼入 PRAGMA（PRAGMA 不接受占位参数），调用方只传内部常量、无注入风险。
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%q)", table))
+	if err != nil {
+		return false, fmt.Errorf("读取表信息失败: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		// PRAGMA table_info 返回列：cid, name, type, notnull, dflt_value, pk。
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return false, fmt.Errorf("扫描表信息失败: %w", err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // schemaStmts 是建表与建索引语句集合。
@@ -48,6 +127,8 @@ var schemaStmts = []string{
 		idle_timeout_sec    INTEGER NOT NULL DEFAULT 300,
 		sniff_domain        INTEGER NOT NULL DEFAULT 1,
 		sniff_timeout_ms    INTEGER NOT NULL DEFAULT 300,
+		server_addr         TEXT    NOT NULL DEFAULT '',
+		probe_pool_size     INTEGER NOT NULL DEFAULT 150,
 		updated_at          TEXT    NOT NULL DEFAULT ''
 	);`,
 
@@ -57,6 +138,7 @@ var schemaStmts = []string{
 		username   TEXT    NOT NULL UNIQUE,
 		pwd        TEXT    NOT NULL,
 		remark     TEXT    NOT NULL DEFAULT '',
+		all_groups INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT    NOT NULL DEFAULT '',
 		updated_at TEXT    NOT NULL DEFAULT ''
 	);`,

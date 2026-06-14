@@ -15,6 +15,7 @@ func (s *Store) GetSystemSetting() (*SystemSetting, error) {
 		       hc_default_mode, hc_default_url, hc_default_interval,
 		       hc_default_fail_thld, hc_default_recv_thld,
 		       default_action, log_level, idle_timeout_sec, sniff_domain, sniff_timeout_ms,
+		       server_addr, probe_pool_size,
 		       updated_at
 		FROM system_setting WHERE id = 1`)
 
@@ -26,6 +27,7 @@ func (s *Store) GetSystemSetting() (*SystemSetting, error) {
 		&mode, &ss.HCDefaultURL, &ss.HCDefaultInterval,
 		&ss.HCDefaultFailThld, &ss.HCDefaultRecvThld,
 		&ss.DefaultAction, &ss.LogLevel, &ss.IdleTimeoutSec, &sniffDomain, &ss.SniffTimeoutMs,
+		&ss.ServerAddr, &ss.ProbePoolSize,
 		&updatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("读取系统设置失败: %w", err)
@@ -51,6 +53,7 @@ func (s *Store) UpdateSystemSetting(ss *SystemSetting) error {
 				hc_default_fail_thld = ?, hc_default_recv_thld = ?,
 				default_action = ?, log_level = ?, idle_timeout_sec = ?,
 				sniff_domain = ?, sniff_timeout_ms = ?,
+				server_addr = ?, probe_pool_size = ?,
 				updated_at = ?
 			WHERE id = 1`,
 			ss.AdminUser, ss.AdminPwdHash, ss.StatRetentionDays,
@@ -58,6 +61,7 @@ func (s *Store) UpdateSystemSetting(ss *SystemSetting) error {
 			ss.HCDefaultFailThld, ss.HCDefaultRecvThld,
 			ss.DefaultAction, ss.LogLevel, ss.IdleTimeoutSec,
 			sniffDomain, ss.SniffTimeoutMs,
+			ss.ServerAddr, ss.ProbePoolSize,
 			fmtTime(now()),
 		)
 		if err != nil {

@@ -17,6 +17,10 @@ const loading = ref(false)
 const settings = reactive({
   adminUser: '',
   statRetentionDays: 30,
+  // 服务器域名/IP：仅用于"复制代理地址"等连接提示文案；首次由后端探测本机非回环 IP，可手填覆盖。
+  serverAddr: '',
+  // 健康检查协程池大小：限制并发探测数（默认 150，可热调整）。
+  probePoolSize: 150,
   hcDefaults: {
     mode: 'url',
     url: 'https://www.bing.com/hp/api/v1/carousel?&format=json',
@@ -38,6 +42,8 @@ async function loadSettings() {
     if (d) {
       settings.adminUser = d.adminUser || ''
       settings.statRetentionDays = d.statRetentionDays ?? 30
+      settings.serverAddr = d.serverAddr || ''
+      settings.probePoolSize = d.probePoolSize ?? 150
       if (d.hcDefaults) Object.assign(settings.hcDefaults, d.hcDefaults)
       // 运行期动态设置
       settings.defaultAction = d.defaultAction || 'forward'
@@ -56,6 +62,8 @@ async function saveSettings() {
   try {
     await sysApi.updateSettings({
       statRetentionDays: settings.statRetentionDays,
+      serverAddr: settings.serverAddr,
+      probePoolSize: settings.probePoolSize,
       hcDefaults: settings.hcDefaults,
       // 运行期动态设置一并提交
       defaultAction: settings.defaultAction,
@@ -148,6 +156,16 @@ onMounted(loadSettings)
           <el-form label-width="130px">
             <el-form-item label="管理员账号">
               <el-input v-model="settings.adminUser" disabled />
+            </el-form-item>
+
+            <el-divider content-position="left">服务器与连接</el-divider>
+            <el-form-item label="服务器域名/IP">
+              <el-input v-model="settings.serverAddr" placeholder="如 proxy.example.com 或 1.2.3.4" style="width: 260px" />
+              <span class="text-muted hint">用于"复制代理地址"等连接提示；留空则用后端探测值</span>
+            </el-form-item>
+            <el-form-item label="健康检查协程池大小">
+              <el-input-number v-model="settings.probePoolSize" :min="1" :max="10000" />
+              <span class="text-muted hint">限制并发健康探测数（默认 150，可热调整）</span>
             </el-form-item>
 
             <el-divider content-position="left">运行期设置</el-divider>

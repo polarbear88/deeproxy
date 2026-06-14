@@ -210,3 +210,76 @@ func TestApplyResult_PersistFailRollback(t *testing.T) {
 	}
 	_ = g
 }
+
+// TestProbePoolBoundsConcurrency 验证 DEC-C1（AC-5.3）：全局探测池限制并发数 ≤ probe_pool_size。
+//
+// 构造：一个 Type B 组含 N 条上游，把 probe_pool_size 设为较小的 limit；用一个会阻塞片刻并
+// 记录「当前在飞探测数」峰值的 prober 跑一轮 scanOnce，断言观测到的峰值并发不超过 limit，
+// 且确实达到了并发（>1，证明不是退回串行）。
+func TestProbePoolBoundsConcurrency(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "pool.db"))
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	defer st.Close()
+
+	// 设置全局池大小为 limit。
+	const limit = 4
+	ss, _ := st.GetSystemSetting()
+	ss.ProbePoolSize = limit
+	if err := st.UpdateSystemSetting(ss); err != nil {
+		t.Fatalf("设置 probe_pool_size 失败: %v", err)
+	}
+
+	g := store.Group{
+		Name: "bigpool", Type: store.TypeB,
+		HCEnabled: true, HCMode: store.HealthPing, HCInterval: 1, HCFailThld: 3, HCRecvThld: 2,
+	}
+	if err := st.CreateGroup(&g); err != nil {
+		t.Fatalf("建组失败: %v", err)
+	}
+	const n = 20
+	for i := 0; i < n; i++ {
+		u := store.UpstreamProxy{GroupID: g.ID, Host: "127.0.0.1", Port: 9, Weight: 1, Enabled: true, HealthState: true}
+		if err := st.CreateUpstream(&u); err != nil {
+			t.Fatalf("建上游失败: %v", err)
+		}
+	}
+
+	// 记录在飞并发峰值的 prober：进入时 +1、记录峰值、阻塞片刻、退出时 -1。
+	var (
+		mu       sync.Mutex
+		inflight int
+		maxSeen  int
+	)
+	prober := proberFunc(func(_ context.Context, _ store.UpstreamProxy, _ store.HealthMode, _ string) ProbeResult {
+		mu.Lock()
+		inflight++
+		if inflight > maxSeen {
+			maxSeen = inflight
+		}
+		mu.Unlock()
+
+		time.Sleep(30 * time.Millisecond) // 制造重叠窗口，逼出并发峰值
+
+		mu.Lock()
+		inflight--
+		mu.Unlock()
+		return ProbeResult{OK: true, Latency: time.Millisecond}
+	})
+
+	hc := NewHealthChecker(st, prober, &fakeRefresher{}, nil)
+	hc.scanOnce(context.Background(), map[int64]time.Time{})
+
+	mu.Lock()
+	got := maxSeen
+	mu.Unlock()
+
+	if got > limit {
+		t.Fatalf("并发峰值 %d 超过池上限 %d（全局池未生效）", got, limit)
+	}
+	if got <= 1 {
+		t.Fatalf("并发峰值仅 %d，说明退回串行而非并发探测", got)
+	}
+}
+

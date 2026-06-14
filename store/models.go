@@ -67,6 +67,14 @@ type SystemSetting struct {
 	SniffDomain    bool   // 是否启用域名嗅探（IP 未命中 ip-cidr 时嗅探 SNI/Host，默认开）
 	SniffTimeoutMs int    // 嗅探首包等待超时（毫秒，默认 300）
 
+	// —— v2 批量增强新增 ——
+	// ServerAddr 是后台展示用的服务器域名/IP（仅用于生成「复制代理地址」与连接示例文案，
+	// 并非 SOCKS5 监听绑定地址）；首次为空时由后端探测本机非回环 IP 兜底，用户可手填覆盖。
+	ServerAddr string
+	// ProbePoolSize 是健康检查全局协程池大小（所有分组所有探测共用一个池，DEC-C1，默认 150）。
+	// 每轮 scanOnce 开头重新读取生效（不做在途 resize）。
+	ProbePoolSize int
+
 	UpdatedAt          time.Time  // 最后更新时间
 }
 
@@ -87,6 +95,10 @@ type ProxyUser struct {
 	Username  string // 代理用户名（连接用户名 user-group 的首段）
 	Pwd       string // 连接密码（明文存储，鉴权时直接比对）
 	Remark    string // 备注
+	// AllGroups 是「授权全部分组」通配标志（DEC-B1）：为 true 时该用户可访问所有分组，
+	// 且与逐组授权（group_user）【并存】——它是独立布尔标志，切换它【永不清空】精细授权行；
+	// IsAuthorized = all_groups 命中 OR 精细行命中。
+	AllGroups bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

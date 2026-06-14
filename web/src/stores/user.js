@@ -14,6 +14,9 @@ export const useUserStore = defineStore('user', () => {
   const username = ref('')
   // 系统是否已完成首次初始化（设置过管理员账密）
   const initialized = ref(true)
+  // 是否已向后端确认过初始化状态：路由守卫据此「仅未确认时查一次」，
+  // 避免每次路由切换都打 init 接口（initialized 默认 true 无法作为是否查过的判据）。
+  const initChecked = ref(false)
 
   // 标记登录成功
   function setLoggedIn(name) {
@@ -30,9 +33,11 @@ export const useUserStore = defineStore('user', () => {
   }
 
   // 查询系统初始化状态（是否需要跳首次设置页）。后端返回 { initialized }。
+  // 查询成功后置 initChecked，路由守卫之后不再重复查询（健康系统仅查一次）。
   async function fetchInitStatus() {
     const data = await authApi.getInitStatus()
     initialized.value = !!data.initialized
+    initChecked.value = true
     return initialized.value
   }
 
@@ -47,6 +52,7 @@ export const useUserStore = defineStore('user', () => {
   async function setup(payload) {
     const data = await authApi.setup(payload)
     initialized.value = true
+    initChecked.value = true
     return data
   }
 
@@ -63,6 +69,7 @@ export const useUserStore = defineStore('user', () => {
     loggedIn,
     username,
     initialized,
+    initChecked,
     setLoggedIn,
     clear,
     fetchInitStatus,

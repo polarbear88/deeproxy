@@ -101,12 +101,20 @@ func TestRealtimeCounters(t *testing.T) {
 	c.IncActionDirect()
 	c.IncActionReject()
 
+	// AC-5.5：进程级累计字节应被 AddUp/AddDown 累加，供实时速率采样。
+	c.AddUp(1, 1, 100)
+	c.AddUp(1, 2, 50) // 跨维度也汇入进程级总量
+	c.AddDown(1, 1, 300)
+
 	rt := c.RealtimeSnapshot()
 	if rt.ActiveConns != 1 {
 		t.Fatalf("活跃连接应为 1，得到 %d", rt.ActiveConns)
 	}
 	if rt.RejectRule != 1 || rt.RejectAuth != 2 {
 		t.Fatalf("拒连计数不符: rule=%d auth=%d", rt.RejectRule, rt.RejectAuth)
+	}
+	if rt.TotalUpBytes != 150 || rt.TotalDownBytes != 300 {
+		t.Fatalf("进程级累计字节不符: up=%d(期望150) down=%d(期望300)", rt.TotalUpBytes, rt.TotalDownBytes)
 	}
 	if rt.ActForward != 1 || rt.ActDirect != 1 || rt.ActReject != 1 {
 		t.Fatalf("动作分布不符: %+v", rt)

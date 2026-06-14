@@ -257,6 +257,10 @@ func (a *App) handleCreateRule(c *gin.Context) {
 		return
 	}
 	r := store.Rule{RuleGroupID: rgid, Match: req.Match, Action: req.Action, OrderIdx: req.Order}
+	// DEC-A1 写前校验：先用「现有规则 + 本条新规则」候选编译，非法则挡在落库前（DB 不写、不分裂）。
+	if !a.validateRuleUpsert(c, r) {
+		return
+	}
 	if err := a.store.CreateRule(&r); err != nil {
 		respondError(c, http.StatusInternalServerError, "新增规则失败: "+err.Error())
 		return
@@ -278,6 +282,10 @@ func (a *App) handleUpdateRule(c *gin.Context) {
 		return
 	}
 	r := store.Rule{ID: rid, Match: req.Match, Action: req.Action, OrderIdx: req.Order}
+	// DEC-A1 写前校验：用「现有规则集（本条按 ID 覆盖）」候选编译，非法则挡在落库前。
+	if !a.validateRuleUpsert(c, r) {
+		return
+	}
 	if err := a.store.UpdateRule(&r); err != nil {
 		respondError(c, http.StatusInternalServerError, "更新规则失败: "+err.Error())
 		return

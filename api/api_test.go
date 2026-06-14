@@ -46,7 +46,7 @@ func testApp(t *testing.T) *App {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	cfg := &config.Config{}
+	cfg := &config.Config{Listen: "0.0.0.0:1768", AdminListen: "0.0.0.0:1769"}
 	snap, err := snapbuild.Rebuild(st, cfg)
 	if err != nil {
 		t.Fatalf("初次 Rebuild 失败: %v", err)
@@ -214,7 +214,8 @@ func TestGroupAndRuleCRUD(t *testing.T) {
 	}
 }
 
-// TestBadRuleRollback 验证非法规则导致快照重建失败时 G4 回滚（写入但返回错误）。
+// TestBadRuleRollback 验证 DEC-A1（AC-5.1）写前候选校验：非法规则在【落库之前】被拦截，
+// 返回 400 且 DB 不写入坏规则（DB 与转发快照不分裂，Principle 1）。
 func TestBadRuleRollback(t *testing.T) {
 	app := testApp(t)
 	cookies := setupAndLogin(t, app)
@@ -225,16 +226,254 @@ func TestBadRuleRollback(t *testing.T) {
 	w := doJSON(t, app, "POST", "/api/rule-groups", ruleGroupReq{Name: "g", Scope: "global"}, cookies)
 	var rg ruleGroupResp
 	mustUnmarshal(t, w.Body.Bytes(), &rg)
+	rgPath := "/api/rule-groups/" + strconv.FormatInt(rg.ID, 10) + "/rules"
 
-	// 非法 ip-cidr → 预编译失败 → 500（G4：返回错误）。
-	w = doJSON(t, app, "POST", "/api/rule-groups/"+strconv.FormatInt(rg.ID, 10)+"/rules",
+	// 非法 ip-cidr → 写前候选编译失败 → 400（挡在落库前，配置未改动）。
+	w = doJSON(t, app, "POST", rgPath,
 		ruleReq{Match: "ip-cidr:not-a-cidr", Action: "direct", Order: 1}, cookies)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("非法规则应 500（G4 回滚）, got %d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("非法规则应 400（写前拦截），got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// 关键断言：坏规则【未落库】——列表应为空，证明 DB 与快照未被坏配置污染。
+	w = doJSON(t, app, "GET", rgPath, nil, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("读取规则列表失败: %d %s", w.Code, w.Body.String())
+	}
+	var rules []ruleResp
+	mustUnmarshal(t, w.Body.Bytes(), &rules)
+	if len(rules) != 0 {
+		t.Fatalf("坏规则不应落库，列表却含 %d 条: %+v", len(rules), rules)
+	}
+
+	// 合法规则随后应正常写入并生效（证明拦截不影响正常写）。
+	w = doJSON(t, app, "POST", rgPath,
+		ruleReq{Match: "domain-suffix:example.com", Action: "reject", Order: 1}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("合法规则应写入成功, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 
 // TestImportExportRoundTrip 验证配置导入导出回环 + schemaVersion 校验（AC-37/G4）。
+// TestUserAuthzAllGroupsCoexist 验证 DEC-B1（T1.1）「并存」语义：
+// all_groups 开→存→关→存，用户原有逐组精细授权完整保留（不被 all_groups 切换清除）。
+func TestUserAuthzAllGroupsCoexist(t *testing.T) {
+	app := testApp(t)
+	cookies := setupAndLogin(t, app)
+
+	// 造两个分组与一个用户。
+	w := doJSON(t, app, "POST", "/api/groups", groupReq{Name: "g1", Type: "B"}, cookies)
+	var g1 groupResp
+	mustUnmarshal(t, w.Body.Bytes(), &g1)
+	w = doJSON(t, app, "POST", "/api/groups", groupReq{Name: "g2", Type: "B"}, cookies)
+	var g2 groupResp
+	mustUnmarshal(t, w.Body.Bytes(), &g2)
+
+	w = doJSON(t, app, "POST", "/api/proxy-users", userReq{Username: "bob", Password: "pw"}, cookies)
+	var u userResp
+	mustUnmarshal(t, w.Body.Bytes(), &u)
+	uPath := "/api/proxy-users/" + strconv.FormatInt(u.ID, 10) + "/groups"
+
+	// D3：用户列表/详情应回传明文 pwd，供「复制代理地址」拼可用 URL。
+	got0 := getUserByID(t, app, cookies, u.ID)
+	if got0.Pwd != "pw" {
+		t.Fatalf("用户列表应回传明文 pwd=pw（供复制代理地址），得到 %q", got0.Pwd)
+	}
+
+	on := true
+	off := false
+
+	// 1) 先逐组授权 g1（精细），并开 all_groups。
+	w = doJSON(t, app, "POST", uPath, setUserGroupsReq{AllGroups: &on, GroupIDs: []int64{g1.ID}}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("设置授权失败: %d %s", w.Code, w.Body.String())
+	}
+	// 回显：all_groups=true 且 g1 在精细列表中。
+	got := getUserByID(t, app, cookies, u.ID)
+	if !got.AllGroups {
+		t.Fatal("应回显 allGroups=true")
+	}
+	if !containsID(got.GroupIDs, g1.ID) {
+		t.Fatalf("精细授权应含 g1，得到 %+v", got.GroupIDs)
+	}
+
+	// 2) 关掉 all_groups，但【不传 groupIds】（只改通配维度）。精细授权必须完整保留。
+	w = doJSON(t, app, "POST", uPath, setUserGroupsReq{AllGroups: &off}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("关闭 all_groups 失败: %d %s", w.Code, w.Body.String())
+	}
+	got = getUserByID(t, app, cookies, u.ID)
+	if got.AllGroups {
+		t.Fatal("应回显 allGroups=false")
+	}
+	if !containsID(got.GroupIDs, g1.ID) {
+		t.Fatalf("关闭 all_groups 后精细授权 g1 不应丢失，得到 %+v", got.GroupIDs)
+	}
+}
+
+// getUserByID 从用户列表取指定 ID 的用户视图（测试辅助）。
+func getUserByID(t *testing.T, app *App, cookies []*http.Cookie, id int64) userResp {
+	t.Helper()
+	w := doJSON(t, app, "GET", "/api/proxy-users", nil, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("读取用户列表失败: %d %s", w.Code, w.Body.String())
+	}
+	var users []userResp
+	mustUnmarshal(t, w.Body.Bytes(), &users)
+	for _, u := range users {
+		if u.ID == id {
+			return u
+		}
+	}
+	t.Fatalf("未找到用户 id=%d", id)
+	return userResp{}
+}
+
+// containsID 判断 id 是否在切片中（测试辅助）。
+func containsID(ids []int64, id int64) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBatchAndBulkUpstreams 验证 WP-3 批量添加（AC-3.1）、分页（AC-3.3）、批量改权重（AC-3.4）。
+func TestBatchAndBulkUpstreams(t *testing.T) {
+	app := testApp(t)
+	cookies := setupAndLogin(t, app)
+
+	w := doJSON(t, app, "POST", "/api/groups", groupReq{Name: "poolB", Type: "B"}, cookies)
+	var g groupResp
+	mustUnmarshal(t, w.Body.Bytes(), &g)
+	base := "/api/groups/" + strconv.FormatInt(g.ID, 10) + "/upstreams"
+
+	// 批量添加：2 行合法（@ 形 + colon 形）、1 行非法（裸 IPv6）。用 lines 数组（最终契约）。
+	lines := []string{"u1:p1@h1.com:1080", "u2:p2:h2.com:2080", "2001:db8::1:3080"}
+	w = doJSON(t, app, "POST", base+"/batch", batchUpstreamReq{Lines: lines, Weight: 3}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("批量添加失败: %d %s", w.Code, w.Body.String())
+	}
+	var br batchUpstreamResp
+	mustUnmarshal(t, w.Body.Bytes(), &br)
+	if br.OK != 2 || len(br.Failed) != 1 {
+		t.Fatalf("批量结果应 ok=2 failed=1，得到 %+v", br)
+	}
+	if br.Failed[0].Line != 3 {
+		t.Fatalf("失败明细应含第3行: %+v", br.Failed)
+	}
+
+	// 分页：page=1&pageSize=1 → 1 条，total=2。
+	w = doJSON(t, app, "GET", base+"?page=1&pageSize=1", nil, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("分页查询失败: %d %s", w.Code, w.Body.String())
+	}
+	var pr pagedUpstreamsResp
+	mustUnmarshal(t, w.Body.Bytes(), &pr)
+	if pr.Total != 2 || len(pr.Items) != 1 {
+		t.Fatalf("分页应 total=2 items=1，得到 total=%d items=%d", pr.Total, len(pr.Items))
+	}
+
+	// 批量改权重（筛选模式，全部）：changes.weight→7。
+	wt := 7
+	w = doJSON(t, app, "POST", base+"/bulk",
+		bulkUpdateUpstreamsReq{Filter: &bulkFilterDTO{}, Changes: bulkChangesDTO{Weight: &wt}}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("批量改权重失败: %d %s", w.Code, w.Body.String())
+	}
+	// 校验全部权重为 7。
+	w = doJSON(t, app, "GET", base, nil, cookies)
+	var ups []upstreamResp
+	mustUnmarshal(t, w.Body.Bytes(), &ups)
+	if len(ups) != 2 {
+		t.Fatalf("应有 2 条上游，得到 %d", len(ups))
+	}
+	for _, u := range ups {
+		if u.Weight != 7 {
+			t.Fatalf("上游 %s 权重应 7，得到 %d", u.Host, u.Weight)
+		}
+	}
+
+	// 批量改启停（id 列表模式）：禁用第一条。
+	off := false
+	w = doJSON(t, app, "POST", base+"/bulk",
+		bulkUpdateUpstreamsReq{IDs: []int64{ups[0].ID}, Changes: bulkChangesDTO{Enabled: &off}}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("批量改启停失败: %d %s", w.Code, w.Body.String())
+	}
+	w = doJSON(t, app, "GET", base, nil, cookies)
+	var ups2 []upstreamResp
+	mustUnmarshal(t, w.Body.Bytes(), &ups2)
+	disabled := 0
+	for _, u := range ups2 {
+		if !u.Enabled {
+			disabled++
+		}
+	}
+	if disabled != 1 {
+		t.Fatalf("应有 1 条被禁用，得到 %d", disabled)
+	}
+}
+
+// TestSettingsServerAddrAndProbePool 验证 WP-4：serverAddr/probePoolSize 读写往返 + server-info 端点。
+func TestSettingsServerAddrAndProbePool(t *testing.T) {
+	app := testApp(t)
+	cookies := setupAndLogin(t, app)
+
+	// 设置 serverAddr 与 probePoolSize。
+	addr := "proxy.example.com"
+	w := doJSON(t, app, "PUT", "/api/settings", settingsReq{
+		ServerAddr:    &addr,
+		ProbePoolSize: 200,
+	}, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("更新设置失败: %d %s", w.Code, w.Body.String())
+	}
+
+	// GET 回显应反映新值。
+	w = doJSON(t, app, "GET", "/api/settings", nil, cookies)
+	var sr settingsResp
+	mustUnmarshal(t, w.Body.Bytes(), &sr)
+	if sr.ServerAddr != addr {
+		t.Fatalf("serverAddr 往返失败: %q", sr.ServerAddr)
+	}
+	if sr.ProbePoolSize != 200 {
+		t.Fatalf("probePoolSize 往返失败: %d", sr.ProbePoolSize)
+	}
+	// GET /settings 也应暴露监听端口（前端连接示例优先从 settings 取）。
+	if sr.Socks5Port != 1768 || sr.WebPort != 1769 {
+		t.Fatalf("settings 应含端口 socks5=1768/web=1769，得到 socks5=%d web=%d", sr.Socks5Port, sr.WebPort)
+	}
+
+	// server-info 端点应返回已设置的 serverAddr。
+	w = doJSON(t, app, "GET", "/api/settings/server-info", nil, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("server-info 失败: %d %s", w.Code, w.Body.String())
+	}
+	var info serverInfoResp
+	mustUnmarshal(t, w.Body.Bytes(), &info)
+	if info.ServerAddr != addr {
+		t.Fatalf("server-info serverAddr 应为 %q，得到 %q", addr, info.ServerAddr)
+	}
+}
+
+// TestFeatureStatus 验证 T6.3 权威功能状态表端点返回 dashboard.top.domain=not-implemented。
+func TestFeatureStatus(t *testing.T) {
+	app := testApp(t)
+	cookies := setupAndLogin(t, app)
+
+	w := doJSON(t, app, "GET", "/api/feature-status", nil, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("feature-status 失败: %d %s", w.Code, w.Body.String())
+	}
+	var status map[string]string
+	mustUnmarshal(t, w.Body.Bytes(), &status)
+	if status["dashboard.top.domain"] != "not-implemented" {
+		t.Fatalf("dashboard.top.domain 应为 not-implemented，得到 %q", status["dashboard.top.domain"])
+	}
+}
+
 func TestImportExportRoundTrip(t *testing.T) {
 	app := testApp(t)
 	cookies := setupAndLogin(t, app)
@@ -266,6 +505,55 @@ func TestImportExportRoundTrip(t *testing.T) {
 	w = doJSON(t, app, "POST", "/api/settings/import", impReq, cookies)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("版本不兼容应 400, got %d", w.Code)
+	}
+}
+
+// TestImportBadRuleRejected 验证 AC-5.1（task #13 修复）：导入含坏规则的 bundle 在落库前被拦截，
+// 返回 400 且 DB 未变更（坏规则不落库、DB 与快照不分裂，修复 split-brain）。
+func TestImportBadRuleRejected(t *testing.T) {
+	app := testApp(t)
+	cookies := setupAndLogin(t, app)
+
+	// 先建一份合法基线配置并导出，作为「导入前的 DB 状态」。
+	doJSON(t, app, "POST", "/api/groups", groupReq{Name: "baseGroup", Type: "B"}, cookies)
+	w := doJSON(t, app, "GET", "/api/settings/export", nil, cookies)
+	var baseline exportBundle
+	mustUnmarshal(t, w.Body.Bytes(), &baseline)
+
+	// 构造一个含【坏规则】的导入 bundle：一个全局规则组 + 一条非法 ip-cidr 规则。
+	bad := exportBundle{
+		SchemaVersion: configSchemaVersion,
+		Data: configData{
+			RuleGroups: []store.RuleGroup{{ID: 1, Name: "bad-glob", Scope: store.ScopeGlobal}},
+			Rules:      []store.Rule{{ID: 1, RuleGroupID: 1, Match: "ip-cidr:not-a-cidr", Action: "direct", OrderIdx: 0}},
+		},
+	}
+	impReq := importReq{SchemaVersion: bad.SchemaVersion, Data: bad.Data, Strategy: "overwrite"}
+	w = doJSON(t, app, "POST", "/api/settings/import", impReq, cookies)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("含坏规则的导入应 400（写前拦截），got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// 关键断言：DB 未变更——重新导出应与基线一致（坏规则未落库、基线分组仍在）。
+	w = doJSON(t, app, "GET", "/api/settings/export", nil, cookies)
+	var after exportBundle
+	mustUnmarshal(t, w.Body.Bytes(), &after)
+	if len(after.Data.Rules) != 0 {
+		t.Fatalf("坏规则不应落库，导出却含 %d 条规则: %+v", len(after.Data.Rules), after.Data.Rules)
+	}
+	if len(after.Data.Groups) != len(baseline.Data.Groups) || len(after.Data.Groups) != 1 {
+		t.Fatalf("基线分组应保持不变（1 个），得到 %d", len(after.Data.Groups))
+	}
+	if after.Data.Groups[0].Name != "baseGroup" {
+		t.Fatalf("基线分组应仍为 baseGroup，得到 %q", after.Data.Groups[0].Name)
+	}
+
+	// 反证：把规则改成合法后，同结构导入应成功（证明拦截只针对坏规则、不误伤）。
+	good := impReq
+	good.Data.Rules = []store.Rule{{ID: 1, RuleGroupID: 1, Match: "ip-cidr:10.0.0.0/8", Action: "direct", OrderIdx: 0}}
+	w = doJSON(t, app, "POST", "/api/settings/import", good, cookies)
+	if w.Code != http.StatusOK {
+		t.Fatalf("合法规则导入应成功, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -313,6 +601,14 @@ func TestDashboard(t *testing.T) {
 	if resp.TodayUp != 0 {
 		t.Fatalf("无流量今日上行应为 0, got %d", resp.TodayUp)
 	}
+	// 首页连接提示字段（AC-2.6/4.2）：端口来自 testApp 的 cfg.Listen/AdminListen。
+	if resp.Socks5Port != 1768 {
+		t.Fatalf("socks5Port 应为 1768, got %d", resp.Socks5Port)
+	}
+	if resp.WebPort != 1769 {
+		t.Fatalf("webPort 应为 1769, got %d", resp.WebPort)
+	}
+	// serverAddr 未设置时回探测 IP，可能为空（无网卡环境），不强断言其值，仅确认字段存在不报错。
 }
 
 // TestGroupRuleGroupDuplicateName 验证分组名/规则组名重名校验（FIX-H4）：

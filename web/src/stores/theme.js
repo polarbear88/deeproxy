@@ -60,9 +60,10 @@ export const useThemeStore = defineStore('theme', () => {
     applyTheme()
   }
 
-  // ECharts 主题名：暗色用 'dark'，亮色用 null（默认）
+  // ECharts 主题名：暗色用自定义 'deeproxy-dark'（透明背景+暗色文本/轴线，
+  // 在 EChart.js 中注册），亮色用 null（默认主题）
   function echartsTheme() {
-    return isDark.value ? 'dark' : null
+    return isDark.value ? 'deeproxy-dark' : null
   }
 
   return { isDark, preference, applyTheme, toggle, followSystem, echartsTheme }

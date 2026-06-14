@@ -10,6 +10,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -33,12 +34,16 @@ func newSessionStore() *sessionStore {
 }
 
 // Create 生成一个新会话并返回其 ID。
-func (s *sessionStore) Create() string {
-	id := randomToken()
+// 随机源失败时返回错误（绝不签发可预测的弱会话 ID），由调用方据此回 500。
+func (s *sessionStore) Create() (string, error) {
+	id, err := randomToken()
+	if err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	s.sessions[id] = time.Now().Add(sessionTTL)
 	s.mu.Unlock()
-	return id
+	return id, nil
 }
 
 // Validate 校验 sessionID 是否有效（存在且未过期）。顺带惰性清理过期项。
@@ -74,10 +79,14 @@ func (s *sessionStore) Clear() {
 }
 
 // randomToken 生成 32 字节的随机十六进制会话 ID（密码学安全）。
-func randomToken() string {
+// crypto/rand 读取失败时返回错误：会话 ID 是安全凭据，绝不在熵源失败时退化为可预测值
+// （旧实现忽略错误、失败时返回全零 token，会让会话可被伪造）。调用方据此回 500、拒绝签发。
+func randomToken() (string, error) {
 	b := make([]byte, 32)
-	_, _ = rand.Read(b) // crypto/rand 失败概率极低，失败时退化为全零（仍唯一性由长度保证）
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("生成会话随机令牌失败: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // loginLimiter 是按来源 key（IP）的登录失败限流器。

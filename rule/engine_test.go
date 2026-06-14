@@ -104,3 +104,34 @@ func TestMatchIPv6CIDR(t *testing.T) {
 		t.Errorf("IPv6 不命中：Match=%q, 期望默认 forward", got)
 	}
 }
+
+// TestDomainCanonicalize 覆盖 AC-5.4：域名匹配大小写不敏感 + FQDN 尾点归一。
+func TestDomainCanonicalize(t *testing.T) {
+	// pattern 故意写成混合大小写 + 带尾点，验证入库时被规范化。
+	rules := specs(
+		[2]string{"domain-suffix:Google.COM.", "forward"},
+		[2]string{"domain:Ads.Example.com.", "reject"},
+	)
+	eng, err := NewEngine(rules, ActionDirect)
+	if err != nil {
+		t.Fatalf("NewEngine 报错: %v", err)
+	}
+
+	cases := []struct {
+		host string
+		want Action
+		why  string
+	}{
+		{"WWW.GOOGLE.COM", ActionForward, "目标全大写应命中后缀"},
+		{"www.google.com.", ActionForward, "目标带尾点应命中后缀"},
+		{"Google.Com", ActionForward, "后缀含自身、混合大小写"},
+		{"ADS.EXAMPLE.COM.", ActionReject, "精确域名大小写+尾点归一后命中"},
+		{"ads.example.com", ActionReject, "精确域名小写命中"},
+		{"notgoogle.com", ActionDirect, "不误命中后缀→默认 direct"},
+	}
+	for _, c := range cases {
+		if got := eng.Match(c.host); got != c.want {
+			t.Errorf("Match(%q) = %q, 期望 %q（%s）", c.host, got, c.want, c.why)
+		}
+	}
+}

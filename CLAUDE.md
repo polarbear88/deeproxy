@@ -63,6 +63,19 @@ deeproxy 是一个用 **Go** 编写、**跨平台（Windows / macOS / Linux）**
 
 ## 四、用户名编码契约（首版核心约定）
 
+> ⚠️ **v2 权威更正（以代码 `auth/username.go` / `auth/authz.go` 实测为准）**：本节描述的是 **v1**
+> 「用户名整段 = base64(上游)」契约，**已被 v2 取代**。v2 的权威用户名语法为
+> **`user-group[-尾段]`**（按位置用前两个 `-` 切出 `user`/`group`，第三段为尾段整体保留、不再拆分）：
+> - `user`：代理用户名（`ProxyUser.username`）；`group`：分组名（`Group.name`）。
+> - **尾段语义由分组类型决定**：
+>   - **Type A（动态上游组）**：尾段 = `base64("u:p@host:port")`，即把 v1 的「上游编码」下移为尾段（`auth.DecodeUpstream` 解析）。
+>   - **Type B（代理池组）**：尾段 = 命名变量串 `name_value#name_value...`（`auth.ParseVariables` 解析），用于上游用户名模板替换。
+> - **认证**：本地服务强制 SOCKS5 用户名/密码认证；密码字段为 `ProxyUser` 的明文连接密码（v2 明文存储、微秒级比对，仅管理员后台密码用 bcrypt）。
+> - **失败处理**：用户名为空 / 缺分组段 / user 段为空 / group 段为空 / 用户不存在 / 未授权该分组 / 密码不符 / Type A 尾段非法 base64 → 拒连。
+>
+> 下文 v1 描述仅作历史背景保留；实现请以 v2 语法为准。
+
+
 - 客户端连接本地服务时**必须**使用 SOCKS5 用户名/密码认证（RFC 1929）。
 - **用户名字段** = `base64("user:pwd@host:port")`
   - 解码后的明文格式为 `上游用户名:上游密码@上游主机:上游端口`，例如 `user:pwd@aa.com:888`。

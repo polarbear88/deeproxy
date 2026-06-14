@@ -82,7 +82,8 @@ func parse(snap SnapshotView, username string) (*Decision, error) {
 		return nil, &AuthError{Reason: "分组不存在"}
 	}
 	if !snap.IsAuthorized(gi.ID, ui.ID) {
-		return nil, &AuthError{Reason: "用户未授权访问该分组"}
+		// 标注为「未授权访问分组」类，供 Credential.Valid 精确识别并打结构化日志（AC-1.5）。
+		return nil, &AuthError{Reason: "用户未授权访问该分组", Kind: AuthErrUnauthorizedGroup}
 	}
 
 	// 步骤 4：按组类型解析尾段，产出连接级判定。

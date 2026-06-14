@@ -11,10 +11,12 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"deeproxy/pool/parse"
 	"deeproxy/store"
 )
 
@@ -253,21 +255,55 @@ func (a *App) toUpstreamResp(u store.UpstreamProxy) upstreamResp {
 	}
 }
 
+// pagedUpstreamsResp 是分页上游响应（AC-3.3）。
+type pagedUpstreamsResp struct {
+	Items    []upstreamResp `json:"items"`
+	Total    int            `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"pageSize"`
+}
+
 func (a *App) handleListUpstreams(c *gin.Context) {
 	gid, ok := parseIDParam(c, "id")
 	if !ok {
 		return
 	}
-	ups, err := a.store.ListUpstreamsByGroup(gid)
-	if err != nil {
-		respondError(c, http.StatusInternalServerError, "读取上游失败: "+err.Error())
+
+	// 分页参数（AC-3.3）：传了 page 或 pageSize 即走服务端分页，返回 {items,total,page,pageSize}；
+	// 都不传则保持旧契约返回扁平数组（向后兼容快照/旧前端）。
+	pageStr := c.Query("page")
+	pageSizeStr := c.Query("pageSize")
+	keyword := c.Query("keyword")
+	healthState := c.Query("healthState")
+
+	if pageStr == "" && pageSizeStr == "" && keyword == "" && healthState == "" {
+		// 旧契约：全量扁平数组。
+		ups, err := a.store.ListUpstreamsByGroup(gid)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "读取上游失败: "+err.Error())
+			return
+		}
+		out := make([]upstreamResp, 0, len(ups))
+		for _, u := range ups {
+			out = append(out, a.toUpstreamResp(u))
+		}
+		respondOK(c, out)
 		return
 	}
-	out := make([]upstreamResp, 0, len(ups))
-	for _, u := range ups {
-		out = append(out, a.toUpstreamResp(u))
+
+	page := atoiDefault(pageStr, 1)
+	pageSize := atoiDefault(pageSizeStr, 100)
+	filter := store.UpstreamFilter{GroupID: gid, Keyword: keyword, HealthState: healthState}
+	ups, total, err := a.store.ListUpstreamsPaged(filter, page, pageSize)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "分页读取上游失败: "+err.Error())
+		return
 	}
-	respondOK(c, out)
+	items := make([]upstreamResp, 0, len(ups))
+	for _, u := range ups {
+		items = append(items, a.toUpstreamResp(u))
+	}
+	respondOK(c, pagedUpstreamsResp{Items: items, Total: total, Page: page, PageSize: pageSize})
 }
 
 func (a *App) handleCreateUpstream(c *gin.Context) {
@@ -306,6 +342,97 @@ func (a *App) handleCreateUpstream(c *gin.Context) {
 	}
 	a.logger.Info("创建上游", "id", u.ID, "groupId", u.GroupID, "host", u.Host, "port", u.Port)
 	respondOK(c, a.toUpstreamResp(u))
+}
+
+// batchUpstreamReq 是批量添加上游的请求体（AC-3.1/3.2）。
+//
+// 前端最终契约：lines 为字符串数组（每元素一行）。为兼容旧用法仍保留 text（多行文本）：
+// 二者皆可，lines 优先；都为空则无新增。统一默认值（weight/enabled/usernameTemplate）为可选。
+type batchUpstreamReq struct {
+	Lines []string `json:"lines"` // 每元素一行待解析的上游（前端最终契约）
+	Text  string   `json:"text"`  // 兼容：多行文本（lines 为空时回退用它）
+	// 以下为可选的统一默认值：批量行通常只含 host:port[+凭据]，权重/模板等用这些默认值统一套用。
+	Weight           int    `json:"weight"`           // 统一权重（<=0 兜底 1）
+	Enabled          *bool  `json:"enabled"`          // 统一启停（nil 默认启用）
+	UsernameTemplate string `json:"usernameTemplate"` // 统一用户名模板（可空）
+}
+
+// batchUpstreamResp 是批量添加结果（前端最终契约）：ok=成功数，failed=失败明细（行号 + 原因）。
+type batchUpstreamResp struct {
+	OK     int                  `json:"ok"`
+	Failed []batchFailureDetail `json:"failed"`
+}
+
+// batchFailureDetail 是单条失败明细（前端最终契约字段名 line/reason）。
+type batchFailureDetail struct {
+	Line   int    `json:"line"`   // 行号（从 1 开始）
+	Reason string `json:"reason"` // 失败原因
+}
+
+// handleBatchCreateUpstreams 批量添加上游（AC-3.1/3.2，路由 POST /groups/:id/upstreams/batch）。
+//
+// 逐行用 pool/parse 多格式解析，失败行不中断、累计明细返回；成功行一次性入库后只 rebuild 一次。
+func (a *App) handleBatchCreateUpstreams(c *gin.Context) {
+	gid, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req batchUpstreamReq
+	if !bindJSON(c, &req) {
+		return
+	}
+	weight := req.Weight
+	if weight <= 0 {
+		weight = 1
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	// lines 优先（前端最终契约）；为空时回退 text（兼容）。把 lines 拼成多行交给同一解析器，
+	// 保证行号语义一致（pool/parse 按 '\n' 切分并从 1 计行号）。
+	source := req.Text
+	if len(req.Lines) > 0 {
+		source = strings.Join(req.Lines, "\n")
+	}
+
+	results := parse.ParseLines(source)
+	resp := batchUpstreamResp{Failed: []batchFailureDetail{}}
+	successAny := false
+	for _, r := range results {
+		if !r.OK {
+			resp.Failed = append(resp.Failed, batchFailureDetail{Line: r.LineNo, Reason: r.Err})
+			continue
+		}
+		u := store.UpstreamProxy{
+			GroupID:          gid,
+			Host:             r.Up.Host,
+			Port:             r.Up.Port,
+			User:             r.Up.User,
+			UsernameTemplate: req.UsernameTemplate,
+			Pwd:              r.Up.Pwd,
+			Weight:           weight,
+			Enabled:          enabled,
+			HealthState:      true,
+		}
+		if err := a.store.CreateUpstream(&u); err != nil {
+			// 单行入库失败（如外键：分组不存在）也逐行容错累计。
+			resp.Failed = append(resp.Failed, batchFailureDetail{Line: r.LineNo, Reason: err.Error()})
+			continue
+		}
+		resp.OK++
+		successAny = true
+	}
+
+	// 有任何成功入库才需重建快照（一次重建覆盖本批全部新增，避免逐条 rebuild）。
+	if successAny {
+		if !a.rebuildAndSwap(c) {
+			return
+		}
+	}
+	a.logger.Info("批量添加上游", "groupId", gid, "ok", resp.OK, "failed", len(resp.Failed))
+	respondOK(c, resp)
 }
 
 func (a *App) handleUpdateUpstream(c *gin.Context) {
@@ -387,6 +514,96 @@ func (a *App) handleSetUpstreamEnabled(c *gin.Context) {
 	}
 	a.logger.Info("手动启停上游", "id", uid, "enabled", req.Enabled)
 	respondOK(c, nil)
+}
+
+// bulkUpdateUpstreamsReq 是批量改权重/启停的请求体（AC-3.4，前端最终契约）。
+//
+// 选择二选一：ids 非空 → id 列表模式；否则用 filter（按 keyword/healthState 筛当前分组，支持跨页全选）。
+// changes 携带要改的字段（weight / enabled 均为可选指针，可同时改）；至少需一项。
+type bulkUpdateUpstreamsReq struct {
+	IDs     []int64             `json:"ids"`     // id 列表模式：精确选中的上游 id
+	Filter  *bulkFilterDTO      `json:"filter"`  // 筛选模式：keyword/healthState（ids 为空时用）
+	Changes bulkChangesDTO      `json:"changes"` // 要应用的字段变更
+}
+
+// bulkFilterDTO 是筛选模式的条件。
+type bulkFilterDTO struct {
+	Keyword     string `json:"keyword"`
+	HealthState string `json:"healthState"`
+}
+
+// bulkChangesDTO 是批量变更的字段（均可选；指针区分「未传」与「显式值」）。
+type bulkChangesDTO struct {
+	Weight  *int  `json:"weight"`
+	Enabled *bool `json:"enabled"`
+}
+
+// handleBulkUpdateUpstreams 批量改权重/启停（AC-3.4，路由 POST /groups/:id/upstreams/bulk）。
+//
+// 执行策略：单写操作（筛选模式一条 UPDATE；id 列表模式分块 IN，同事务）。weight 与 enabled
+// 若同时传，则各执行一次单 SQL（仍 O(1) 写、非 O(rows)）。返回受影响行数（取各字段最大值，
+// 同一批匹配行数一致）。
+func (a *App) handleBulkUpdateUpstreams(c *gin.Context) {
+	gid, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+	var req bulkUpdateUpstreamsReq
+	if !bindJSON(c, &req) {
+		return
+	}
+	if req.Changes.Weight == nil && req.Changes.Enabled == nil {
+		respondError(c, http.StatusBadRequest, "changes 至少需含 weight 或 enabled 之一")
+		return
+	}
+	useIDs := len(req.IDs) > 0
+
+	// applyField 对一个字段执行一次批量更新（按 ids 或 filter 模式），返回受影响行数。
+	applyField := func(field store.UpstreamBulkField, weight int, enabled bool) (int64, error) {
+		if useIDs {
+			return a.store.BulkUpdateUpstreamsByIDs(gid, req.IDs, field, weight, enabled)
+		}
+		f := store.UpstreamFilter{GroupID: gid}
+		if req.Filter != nil {
+			f.Keyword = req.Filter.Keyword
+			f.HealthState = req.Filter.HealthState
+		}
+		return a.store.BulkUpdateUpstreamsByFilter(f, field, weight, enabled)
+	}
+
+	var affected int64
+	// 改权重。
+	if req.Changes.Weight != nil {
+		w := *req.Changes.Weight
+		if w <= 0 {
+			w = 1 // 权重兜底，避免 SWRR 除零
+		}
+		n, err := applyField(store.BulkFieldWeight, w, false)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "批量改权重失败: "+err.Error())
+			return
+		}
+		if n > affected {
+			affected = n
+		}
+	}
+	// 改启停。
+	if req.Changes.Enabled != nil {
+		n, err := applyField(store.BulkFieldEnabled, 0, *req.Changes.Enabled)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "批量改启停失败: "+err.Error())
+			return
+		}
+		if n > affected {
+			affected = n
+		}
+	}
+
+	if !a.rebuildAndSwap(c) {
+		return
+	}
+	a.logger.Info("批量更新上游", "groupId", gid, "byIDs", useIDs, "affected", affected)
+	respondOK(c, gin.H{"affected": affected})
 }
 
 // testUpstreamResp 是测试连接结果（AC-38）。

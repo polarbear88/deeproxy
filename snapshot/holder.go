@@ -43,15 +43,17 @@ func NewSnapshot(
 	groupsByID map[int64]*GroupView,
 	usersByName map[string]*UserView,
 	authz map[AuthzKey]struct{},
+	allGroupsUsers map[int64]struct{},
 	defaultAction rule.Action,
 	settings Settings,
 ) *Snapshot {
 	return &Snapshot{
-		groupsByName:  groupsByName,
-		groupsByID:    groupsByID,
-		usersByName:   usersByName,
-		authz:         authz,
-		defaultAction: defaultAction,
-		settings:      settings,
+		groupsByName:   groupsByName,
+		groupsByID:     groupsByID,
+		usersByName:    usersByName,
+		authz:          authz,
+		allGroupsUsers: allGroupsUsers,
+		defaultAction:  defaultAction,
+		settings:       settings,
 	}
 }

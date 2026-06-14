@@ -64,6 +64,13 @@ type Counter struct {
 	actForward atomic.Int64
 	actDirect  atomic.Int64
 	actReject  atomic.Int64
+
+	// 进程级累计上/下行字节总量（跨所有维度，单调递增），供实时速率采样（AC-5.5）。
+	// 为什么单独维护而不汇总 dims：实时速率需在「两次 overview 请求间」对累计字节做差分，
+	// 若遍历 dims 汇总既慢又会与 flush 的差分基线纠缠；这里用两个进程级 atomic，
+	// AddUp/AddDown 各多一次 atomic.Add（纳秒级、无锁），读取 O(1)，且与 SQLite 完全解耦。
+	totalUpBytes   atomic.Int64
+	totalDownBytes atomic.Int64
 }
 
 // NewCounter 创建空计数器。
@@ -99,6 +106,7 @@ func (c *Counter) AddUp(groupID, userID, n int64) {
 		return
 	}
 	c.counterFor(groupID, userID).upBytes.Add(n)
+	c.totalUpBytes.Add(n) // 进程级累计，供实时速率采样（AC-5.5）
 }
 
 // AddDown 累加某维度的下行字节（转发侧热路径调用，仅 atomic）。
@@ -107,6 +115,7 @@ func (c *Counter) AddDown(groupID, userID, n int64) {
 		return
 	}
 	c.counterFor(groupID, userID).downBytes.Add(n)
+	c.totalDownBytes.Add(n) // 进程级累计，供实时速率采样（AC-5.5）
 }
 
 // IncReq 累加某维度的请求（连接）数（建连成功时调用一次）。
@@ -146,17 +155,23 @@ type Realtime struct {
 	ActForward  int64 // 累计 forward
 	ActDirect   int64 // 累计 direct
 	ActReject   int64 // 累计 reject
+
+	// 进程级累计上/下行字节总量（单调递增），供实时速率采样（AC-5.5，差分计算 KB/s）。
+	TotalUpBytes   int64
+	TotalDownBytes int64
 }
 
 // RealtimeSnapshot 原子读取各进程级瞬时计数（无锁）。
 func (c *Counter) RealtimeSnapshot() Realtime {
 	return Realtime{
-		ActiveConns: c.activeConns.Load(),
-		RejectRule:  c.rejectRule.Load(),
-		RejectAuth:  c.rejectAuth.Load(),
-		ActForward:  c.actForward.Load(),
-		ActDirect:   c.actDirect.Load(),
-		ActReject:   c.actReject.Load(),
+		ActiveConns:    c.activeConns.Load(),
+		RejectRule:     c.rejectRule.Load(),
+		RejectAuth:     c.rejectAuth.Load(),
+		ActForward:     c.actForward.Load(),
+		ActDirect:      c.actDirect.Load(),
+		ActReject:      c.actReject.Load(),
+		TotalUpBytes:   c.totalUpBytes.Load(),
+		TotalDownBytes: c.totalDownBytes.Load(),
 	}
 }
 

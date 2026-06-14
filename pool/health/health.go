@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"golang.org/x/net/proxy"
+	"golang.org/x/sync/semaphore"
 
 	"deeproxy/store"
 )
@@ -31,6 +32,10 @@ const defaultProbeURL = "https://www.bing.com/hp/api/v1/carousel?&format=json"
 
 // defaultProbeTimeout 是单次探测超时。
 const defaultProbeTimeout = 10 * time.Second
+
+// defaultProbePoolSize 是健康检查全局探测并发池默认大小（DEC-C1，AC-5.3）。
+// 当系统设置未配置或值非法（<=0）时兜底为此值。
+const defaultProbePoolSize = 150
 
 // ProbeResult 是一次探测的结果（供 TestProxy 立即探测 AC-38 返回）。
 type ProbeResult struct {
@@ -200,6 +205,12 @@ func (h *HealthChecker) scanOnce(ctx context.Context, lastRun map[int64]time.Tim
 		byGroup[u.GroupID] = append(byGroup[u.GroupID], u)
 	}
 
+	// DEC-C1（AC-5.3）：本轮探测共用一个全局并发池（信号量），所有分组所有探测受同一上限约束，
+	// 避免单组上游数千时串行拖垮、也避免无上限并发打爆 fd。池大小每轮开头从系统设置重新读取生效
+	// （「下一轮采用新大小」语义），不做在途 resize，避免过度工程。
+	poolSize := h.readProbePoolSize()
+	sem := semaphore.NewWeighted(int64(poolSize))
+
 	changed := false
 	now := time.Now()
 	for _, g := range groups {
@@ -221,7 +232,7 @@ func (h *HealthChecker) scanOnce(ctx context.Context, lastRun map[int64]time.Tim
 		}
 		lastRun[g.ID] = now
 
-		if h.probeGroup(ctx, g, byGroup[g.ID]) {
+		if h.probeGroup(ctx, sem, g, byGroup[g.ID]) {
 			changed = true
 		}
 	}
@@ -235,7 +246,12 @@ func (h *HealthChecker) scanOnce(ctx context.Context, lastRun map[int64]time.Tim
 }
 
 // probeGroup 探测一个组的所有上游，按阈值更新健康判定并落库。返回该组是否有状态变化。
-func (h *HealthChecker) probeGroup(ctx context.Context, g store.Group, ups []store.UpstreamProxy) bool {
+//
+// 并发模型（DEC-C1，AC-5.3）：组内每条启用的上游各起一个 goroutine 探测，
+// 但都需先从【全局共享信号量 sem】获取一个令牌（acquire），探完释放（release）；
+// 因此总并发被 sem 容量（probe_pool_size）严格限制，所有分组共用同一池、互不串行拖累。
+// applyResult 内部持 h.mu，故并发写 h.states 安全；changed/healthyCount 用各自互斥保护。
+func (h *HealthChecker) probeGroup(ctx context.Context, sem *semaphore.Weighted, g store.Group, ups []store.UpstreamProxy) bool {
 	failThld := g.HCFailThld
 	if failThld <= 0 {
 		failThld = 3
@@ -245,27 +261,63 @@ func (h *HealthChecker) probeGroup(ctx context.Context, g store.Group, ups []sto
 		recvThld = 2
 	}
 
-	changed := false
-	healthyCount := 0
+	var (
+		wg           sync.WaitGroup
+		aggMu        sync.Mutex // 保护 changed / healthyCount 的并发累加
+		changed      bool
+		healthyCount int
+	)
 	for _, u := range ups {
 		// 被手动禁用的上游不探测，但仍计入“不可用”（不参与选择）。
 		if !u.Enabled {
 			continue
 		}
-		res := h.prober.Probe(ctx, u, g.HCMode, g.HCURL)
-		if h.applyResult(u, res, failThld, recvThld) {
-			changed = true
+		// 从全局池获取令牌；ctx 取消（关停）时退出，不再发起新探测。
+		if err := sem.Acquire(ctx, 1); err != nil {
+			break
 		}
-		if h.isHealthy(u.ID) {
-			healthyCount++
-		}
+		wg.Add(1)
+		go func(u store.UpstreamProxy) {
+			defer wg.Done()
+			defer sem.Release(1)
+
+			// per-probe context：单条探测超时独立，避免一条慢探测拖住令牌过久。
+			pctx, cancel := context.WithTimeout(ctx, defaultProbeTimeout)
+			defer cancel()
+
+			res := h.prober.Probe(pctx, u, g.HCMode, g.HCURL)
+			flipped := h.applyResult(u, res, failThld, recvThld)
+			healthy := h.isHealthy(u.ID)
+
+			aggMu.Lock()
+			if flipped {
+				changed = true
+			}
+			if healthy {
+				healthyCount++
+			}
+			aggMu.Unlock()
+		}(u)
 	}
+	wg.Wait()
 
 	// 整组全挂告警（AC-17 的拒连由 Selector 在选择期返回 ErrNoUpstream 实现；此处仅日志）。
 	if len(ups) > 0 && healthyCount == 0 {
 		h.logger.Warn("代理组全部上游不可用", "group", g.Name, "groupID", g.ID)
 	}
 	return changed
+}
+
+// readProbePoolSize 从系统设置读取健康检查全局池大小；读失败或非法值兜底为默认 150。
+//
+// 每轮 scanOnce 开头调用一次（DEC-C1「下一轮采用新大小」语义）：后台改了池大小后，
+// 下一轮探测即采用新容量，无需重启、也不做在途信号量 resize（避免过度工程）。
+func (h *HealthChecker) readProbePoolSize() int {
+	ss, err := h.store.GetSystemSetting()
+	if err != nil || ss == nil || ss.ProbePoolSize <= 0 {
+		return defaultProbePoolSize
+	}
+	return ss.ProbePoolSize
 }
 
 // applyResult 按阈值更新某上游的连续计数与健康判定；判定翻转时落库。返回是否【已成功落库的】翻转。

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"deeproxy/internal/netutil"
 )
 
 // rateSampler 记录上次累计字节采样，用于在 overview 请求间算出瞬时速率（KB/s）。
@@ -59,13 +61,18 @@ type overviewResp struct {
 	HealthyProxies  int     `json:"healthyProxies"`  // 健康上游总数
 	TotalProxies    int     `json:"totalProxies"`    // 上游总数
 	UptimeSec       int64   `json:"uptimeSec"`       // 运行时长（秒）
+
+	// —— 首页连接提示（AC-2.6/4.2）：服务器地址 + 监听端口，供首页展示端口与连接示例 ——
+	ServerAddr string `json:"serverAddr"` // 服务器域名/IP（设置值优先，空则回探测的本机 IPv4）
+	Socks5Port int    `json:"socks5Port"` // 本地 SOCKS5 监听端口
+	WebPort    int    `json:"webPort"`    // Web 后台监听端口
 }
 
 // handleDashboardOverview 返回实时+今日扁平概览（AC-24）。
 func (a *App) handleDashboardOverview(c *gin.Context) {
 	rt := a.stats.RealtimeSnapshot()
 
-	// 今日累计字节（用于速率采样基线 + 今日展示）。
+	// 今日累计字节（仅用于今日展示，来自 SQLite 聚合桶——非热路径历史区）。
 	now := time.Now()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	totals, err := a.store.QueryTotals(dayStart, now, 0, 0)
@@ -74,8 +81,11 @@ func (a *App) handleDashboardOverview(c *gin.Context) {
 		return
 	}
 
-	// 速率：用「今日累计字节」做采样差值（两次 overview 间）。
-	upRate, downRate := a.rate.sample(totals.UpBytes, totals.DownBytes)
+	// 实时速率（AC-5.5）：改用【内存累计字节】做采样差值，而非 SQLite 今日聚合。
+	// 为什么：SQLite 桶仅由 flush worker 每 5~10s 写一次，用它采样会让实时速率呈
+	// 「攒一波再跳一下」的锯齿、且滞后于真实流量；进程级 atomic 累计字节是即时、平滑、
+	// 与转发热路径解耦的真实瞬时来源。SQLite 仅保留历史/今日汇总用途。
+	upRate, downRate := a.rate.sample(rt.TotalUpBytes, rt.TotalDownBytes)
 
 	// 健康上游汇总（内存快照）。
 	snap := a.holder.Load()
@@ -83,6 +93,16 @@ func (a *App) handleDashboardOverview(c *gin.Context) {
 	for _, gv := range snap.Groups() {
 		healthy += len(gv.HealthyUpstreams)
 		total += len(gv.AllUpstreams)
+	}
+
+	// 首页连接提示：服务器地址（设置值优先，空则探测本机 IPv4）+ 监听端口（来自启动配置）。
+	// 本端点非转发热路径，额外读一次系统设置可接受。
+	serverAddr := ""
+	if ss, err := a.store.GetSystemSetting(); err == nil && ss != nil {
+		serverAddr = ss.ServerAddr
+	}
+	if serverAddr == "" {
+		serverAddr = netutil.DetectLocalIP()
 	}
 
 	respondOK(c, overviewResp{
@@ -97,6 +117,9 @@ func (a *App) handleDashboardOverview(c *gin.Context) {
 		HealthyProxies:  healthy,
 		TotalProxies:    total,
 		UptimeSec:       int64(time.Since(a.startedAt).Seconds()),
+		ServerAddr:      serverAddr,
+		Socks5Port:      portOf(a.cfg.Listen),
+		WebPort:         portOf(a.cfg.AdminListen),
 	})
 }
 

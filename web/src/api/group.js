@@ -23,8 +23,10 @@ export function deleteGroup(id) {
 
 // ===== Type B 组下的上游代理（嵌套路径）=====
 
-export function listUpstreams(groupId) {
-  return request.get(`/groups/${groupId}/upstreams`)
+// 分页列出某组上游（AC-3.3）。params: { page, pageSize, keyword?, healthState? }
+// 返回 { items:[Upstream], total:number }。后端按 SQL LIMIT/OFFSET + 筛选。
+export function listUpstreams(groupId, params) {
+  return request.get(`/groups/${groupId}/upstreams`, { params })
 }
 
 export function createUpstream(groupId, payload) {
@@ -47,4 +49,24 @@ export function toggleUpstream(groupId, upstreamId, enabled) {
 // 测试连接：立即探测单条上游 → { ok, latencyMs, error? }（AC-38）
 export function testUpstream(groupId, upstreamId) {
   return request.post(`/groups/${groupId}/upstreams/${upstreamId}/test`)
+}
+
+// ===== 批量操作（AC-3.1/3.4）=====
+
+// 批量添加上游（AC-3.1/3.2）。后端真实契约：请求 { lines:[string,...] }（每行一条，
+// 逐行容错）；亦兼容 { text:"多行" }，但 lines 优先。
+// 返回 { ok:int, failed:[{ line:int, reason:string }] }（ok=成功数，failed=失败明细）。
+export function batchAddUpstreams(groupId, lines) {
+  return request.post(`/groups/${groupId}/upstreams/batch`, { lines })
+}
+
+// 批量设置权重/启用状态（AC-3.4）。后端契约为扁平结构：
+//   mode: "filter" | "ids"
+//   field: "weight" | "enabled"  指定本次修改的字段
+//   ids?: [int64]                 mode=ids 时的目标 id 列表
+//   keyword?/healthState?         mode=filter 时的筛选条件（跨页全选）
+//   weight?/enabled?              对应 field 的新值
+// 返回 { affected }。
+export function bulkUpdateUpstreams(groupId, payload) {
+  return request.post(`/groups/${groupId}/upstreams/bulk`, payload)
 }

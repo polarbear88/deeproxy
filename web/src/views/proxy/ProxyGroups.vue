@@ -77,33 +77,93 @@ async function loadGroups() {
 }
 
 // ===== 上游代理抽屉（仅 Type B）=====
-const upstreamDrawer = reactive({ visible: false, group: null, list: [] })
+// 表格采用服务端分页 + 多选 + 批量操作（AC-3.1/3.3/3.4）。
+const upstreamDrawer = reactive({ visible: false, group: null, list: [], total: 0, loading: false })
+// 分页与筛选参数：默认每页 100。
+const upQuery = reactive({ page: 1, pageSize: 100, keyword: '', healthState: '' })
+const upTableRef = ref(null)
+const selectedRows = ref([]) // 当前页勾选的行
+const selectAllByFilter = ref(false) // 跨页全选（按当前筛选）开关
+
 async function openUpstreams(group) {
   upstreamDrawer.group = group
   upstreamDrawer.visible = true
+  // 重置分页/筛选/选择，避免上次状态串台
+  upQuery.page = 1
+  upQuery.keyword = ''
+  upQuery.healthState = ''
+  selectAllByFilter.value = false
+  selectedRows.value = []
   loadGroupChart(group.id)
-  await loadUpstreams(group.id)
+  await loadUpstreams()
 }
-async function loadUpstreams(groupId) {
+// 按当前分页/筛选参数加载上游列表。兼容后端可能返回 {items,total} 或裸数组两种形态。
+async function loadUpstreams() {
+  if (!upstreamDrawer.group) return
+  upstreamDrawer.loading = true
   try {
-    upstreamDrawer.list = (await groupApi.listUpstreams(groupId)) || []
+    const r = await groupApi.listUpstreams(upstreamDrawer.group.id, {
+      page: upQuery.page,
+      pageSize: upQuery.pageSize,
+      keyword: upQuery.keyword || undefined,
+      healthState: upQuery.healthState || undefined,
+    })
+    if (Array.isArray(r)) {
+      // 后端尚未切到分页契约时的降级：当作单页全量
+      upstreamDrawer.list = r
+      upstreamDrawer.total = r.length
+    } else {
+      upstreamDrawer.list = r?.items || []
+      upstreamDrawer.total = r?.total ?? upstreamDrawer.list.length
+    }
   } catch {
     upstreamDrawer.list = []
+    upstreamDrawer.total = 0
+  } finally {
+    upstreamDrawer.loading = false
   }
 }
+// 筛选变化：回到第 1 页并清空跨页全选。
+function onFilterChange() {
+  upQuery.page = 1
+  selectAllByFilter.value = false
+  loadUpstreams()
+}
+function onPageChange(p) {
+  upQuery.page = p
+  loadUpstreams()
+}
+function onSelectionChange(rows) {
+  selectedRows.value = rows
+  // 手动改动当前页选择时，跨页全选语义失效
+  if (selectAllByFilter.value) selectAllByFilter.value = false
+}
+// 是否有可执行批量操作的选择（当前页勾选 或 跨页全选）。
+const hasBulkSelection = computed(() => selectAllByFilter.value || selectedRows.value.length > 0)
+const bulkSelectionLabel = computed(() => {
+  if (selectAllByFilter.value) return `已按当前筛选全选（共 ${upstreamDrawer.total} 条）`
+  if (selectedRows.value.length) return `已选 ${selectedRows.value.length} 条`
+  return ''
+})
 
-const upDialog = reactive({ visible: false, isEdit: false, form: null })
+
+const upDialog = reactive({ visible: false, isEdit: false, tab: 'single', form: null, batchText: '', submitting: false, result: null })
 function emptyUpstreamForm() {
   return { id: null, host: '', port: 1080, user: '', usernameTemplate: '', pwd: '', weight: 1, enabled: true }
 }
 function openCreateUpstream() {
   upDialog.isEdit = false
+  upDialog.tab = 'single'
   upDialog.form = emptyUpstreamForm()
+  upDialog.batchText = ''
+  upDialog.result = null
   upDialog.visible = true
 }
 function openEditUpstream(row) {
   upDialog.isEdit = true
+  upDialog.tab = 'single'
   upDialog.form = { ...emptyUpstreamForm(), ...row }
+  upDialog.result = null
   upDialog.visible = true
 }
 async function saveUpstream() {
@@ -115,9 +175,37 @@ async function saveUpstream() {
     else await groupApi.createUpstream(gid, f)
     ElMessage.success('保存成功')
     upDialog.visible = false
-    loadUpstreams(gid)
+    loadUpstreams()
   } catch {
     /* ignore */
+  }
+}
+// 批量添加：按行拆分，去空行后提交；展示成功数与失败行号/原因（AC-3.1/3.2）。
+async function submitBatchAdd() {
+  const gid = upstreamDrawer.group.id
+  // 文本框按换行拆成数组：CRLF 规范化、逐行 trim、去空行；逐行容错由后端负责。
+  const lines = upDialog.batchText
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+  if (lines.length === 0) return ElMessage.warning('请粘贴至少一行上游')
+  upDialog.submitting = true
+  upDialog.result = null
+  try {
+    const r = await groupApi.batchAddUpstreams(gid, lines)
+    upDialog.result = { ok: r?.ok ?? 0, failed: r?.failed || [] }
+    if (upDialog.result.failed.length === 0) {
+      ElMessage.success(`成功添加 ${upDialog.result.ok} 条`)
+      upDialog.visible = false
+    } else {
+      ElMessage.warning(`成功 ${upDialog.result.ok} 条，失败 ${upDialog.result.failed.length} 条`)
+    }
+    loadUpstreams()
+  } catch {
+    /* ignore */
+  } finally {
+    upDialog.submitting = false
   }
 }
 async function removeUpstream(row) {
@@ -126,7 +214,7 @@ async function removeUpstream(row) {
   try {
     await groupApi.deleteUpstream(gid, row.id)
     ElMessage.success('已删除')
-    loadUpstreams(gid)
+    loadUpstreams()
   } catch {
     /* ignore */
   }
@@ -138,6 +226,54 @@ async function toggleUpstream(row) {
   } catch {
     row.enabled = !row.enabled
   }
+}
+
+// ===== 批量改权重 / 启用禁用（AC-3.4）=====
+// 构造选择载荷（扁平结构）：跨页全选 → mode=filter + keyword/healthState；
+// 否则 mode=ids + ids 列表。
+function buildSelectionPayload() {
+  if (selectAllByFilter.value) {
+    return {
+      mode: 'filter',
+      keyword: upQuery.keyword || undefined,
+      healthState: upQuery.healthState || undefined,
+    }
+  }
+  return { mode: 'ids', ids: selectedRows.value.map((r) => r.id) }
+}
+// field: 'weight'|'enabled'；value: 对应新值。后端按 field 决定写哪个列。
+async function bulkApply(field, value, successMsg) {
+  if (!hasBulkSelection.value) return ElMessage.warning('请先选择上游')
+  const gid = upstreamDrawer.group.id
+  try {
+    const r = await groupApi.bulkUpdateUpstreams(gid, {
+      ...buildSelectionPayload(),
+      field,
+      [field]: value,
+    })
+    ElMessage.success(`${successMsg}（影响 ${r?.affected ?? 0} 条）`)
+    selectAllByFilter.value = false
+    selectedRows.value = []
+    upTableRef.value?.clearSelection?.()
+    loadUpstreams()
+  } catch {
+    /* ignore */
+  }
+}
+async function bulkSetWeight() {
+  const { value } = await ElMessageBox.prompt('为选中上游设置统一权重', '批量设置权重', {
+    inputPattern: /^[1-9]\d*$/,
+    inputErrorMessage: '请输入正整数',
+    inputValue: '1',
+  }).catch(() => ({ value: null }))
+  if (value == null) return
+  bulkApply('weight', Number(value), '已批量设置权重')
+}
+function bulkEnable() {
+  bulkApply('enabled', true, '已批量启用')
+}
+function bulkDisable() {
+  bulkApply('enabled', false, '已批量禁用')
 }
 const testing = ref({})
 async function testUpstream(row) {
@@ -274,12 +410,64 @@ onMounted(loadGroups)
 
     <!-- 上游代理抽屉（仅 Type B）-->
     <el-drawer v-model="upstreamDrawer.visible" :title="`代理池 - ${upstreamDrawer.group?.name || ''}`" size="60%">
-      <div class="flex-between drawer-toolbar">
+      <div class="drawer-toolbar">
         <span class="text-muted">命名变量模板：用户名里写 <code>{region}</code> 等占位，客户端尾段按名替换。</span>
         <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateUpstream">添加上游</el-button>
       </div>
 
-      <el-table :data="upstreamDrawer.list" border size="small" empty-text="暂无上游代理">
+      <!-- 筛选栏 -->
+      <div class="filter-bar">
+        <el-input
+          v-model="upQuery.keyword"
+          placeholder="按主机/用户名搜索"
+          size="small"
+          clearable
+          style="width: 220px"
+          @keyup.enter="onFilterChange"
+          @clear="onFilterChange"
+        />
+        <el-select
+          v-model="upQuery.healthState"
+          placeholder="健康状态"
+          size="small"
+          clearable
+          style="width: 130px"
+          @change="onFilterChange"
+        >
+          <el-option label="可用" value="healthy" />
+          <el-option label="不可用" value="unhealthy" />
+          <el-option label="未知" value="unknown" />
+        </el-select>
+        <el-button size="small" @click="onFilterChange">搜索</el-button>
+      </div>
+
+      <!-- 批量操作工具栏 -->
+      <div class="bulk-bar">
+        <el-checkbox
+          v-model="selectAllByFilter"
+          :disabled="upstreamDrawer.total === 0"
+          @change="selectedRows = []"
+        >
+          按当前筛选跨页全选
+        </el-checkbox>
+        <span v-if="bulkSelectionLabel" class="text-muted bulk-count">{{ bulkSelectionLabel }}</span>
+        <div class="bulk-actions">
+          <el-button size="small" :disabled="!hasBulkSelection" @click="bulkSetWeight">批量设权重</el-button>
+          <el-button size="small" type="success" :disabled="!hasBulkSelection" @click="bulkEnable">批量启用</el-button>
+          <el-button size="small" type="warning" :disabled="!hasBulkSelection" @click="bulkDisable">批量禁用</el-button>
+        </div>
+      </div>
+
+      <el-table
+        ref="upTableRef"
+        v-loading="upstreamDrawer.loading"
+        :data="upstreamDrawer.list"
+        border
+        size="small"
+        empty-text="暂无上游代理"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column type="selection" width="44" />
         <el-table-column label="地址" min-width="160">
           <template #default="{ row }">{{ row.host }}:{{ row.port }}</template>
         </el-table-column>
@@ -309,13 +497,26 @@ onMounted(loadGroups)
         </el-table-column>
       </el-table>
 
+      <!-- 服务端分页：默认每页 100 -->
+      <div class="pager">
+        <el-pagination
+          :current-page="upQuery.page"
+          :page-size="upQuery.pageSize"
+          :total="upstreamDrawer.total"
+          layout="total, prev, pager, next, jumper"
+          background
+          @current-change="onPageChange"
+        />
+      </div>
+
       <el-divider content-position="left">分组流量（24h）</el-divider>
       <EChart :option="groupChartOption" height="260px" />
     </el-drawer>
 
-    <!-- 上游编辑对话框 -->
-    <el-dialog v-model="upDialog.visible" :title="upDialog.isEdit ? '编辑上游' : '添加上游'" width="520px">
-      <el-form v-if="upDialog.form" :model="upDialog.form" label-width="110px">
+    <!-- 上游编辑/添加对话框（添加时支持 单条 / 批量 两 tab）-->
+    <el-dialog v-model="upDialog.visible" :title="upDialog.isEdit ? '编辑上游' : '添加上游'" width="560px">
+      <!-- 编辑模式：仅单条表单 -->
+      <el-form v-if="upDialog.isEdit && upDialog.form" :model="upDialog.form" label-width="110px">
         <el-form-item label="主机" required>
           <el-input v-model="upDialog.form.host" placeholder="域名或 IP" />
         </el-form-item>
@@ -332,9 +533,65 @@ onMounted(loadGroups)
           <el-input-number v-model="upDialog.form.weight" :min="1" />
         </el-form-item>
       </el-form>
+
+      <!-- 添加模式：单条 / 批量 两 tab -->
+      <el-tabs v-else v-model="upDialog.tab">
+        <el-tab-pane label="单条添加" name="single">
+          <el-form v-if="upDialog.form" :model="upDialog.form" label-width="110px">
+            <el-form-item label="主机" required>
+              <el-input v-model="upDialog.form.host" placeholder="域名或 IP" />
+            </el-form-item>
+            <el-form-item label="端口" required>
+              <el-input-number v-model="upDialog.form.port" :min="1" :max="65535" />
+            </el-form-item>
+            <el-form-item label="用户名模板">
+              <el-input v-model="upDialog.form.usernameTemplate" placeholder="如 acct-{region}-{session}" />
+            </el-form-item>
+            <el-form-item label="上游密码">
+              <el-input v-model="upDialog.form.pwd" type="password" show-password placeholder="上游 SOCKS5 密码" />
+            </el-form-item>
+            <el-form-item label="权重">
+              <el-input-number v-model="upDialog.form.weight" :min="1" />
+            </el-form-item>
+          </el-form>
+        </el-tab-pane>
+        <el-tab-pane label="批量添加" name="batch">
+          <p class="text-muted batch-hint">
+            每行一条，支持 <code>user:pass@host:port</code> 或 <code>user:pass:host:port</code>；IPv6 请用
+            <code>user:pass@[::1]:port</code>。
+          </p>
+          <el-input
+            v-model="upDialog.batchText"
+            type="textarea"
+            :rows="8"
+            placeholder="user:pass@host1:1080&#10;user:pass@host2:1080"
+          />
+          <!-- 失败行号/原因回显 -->
+          <div v-if="upDialog.result" class="batch-result">
+            <el-alert
+              :type="upDialog.result.failed.length === 0 ? 'success' : 'warning'"
+              :closable="false"
+              show-icon
+              :title="`成功 ${upDialog.result.ok} 条，失败 ${upDialog.result.failed.length} 条`"
+            />
+            <ul v-if="upDialog.result.failed.length" class="fail-list">
+              <li v-for="(f, i) in upDialog.result.failed" :key="i">第 {{ f.line }} 行：{{ f.reason }}</li>
+            </ul>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+
       <template #footer>
         <el-button @click="upDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="saveUpstream">保存</el-button>
+        <el-button
+          v-if="!upDialog.isEdit && upDialog.tab === 'batch'"
+          type="primary"
+          :loading="upDialog.submitting"
+          @click="submitBatchAdd"
+        >
+          提交批量
+        </el-button>
+        <el-button v-else type="primary" @click="saveUpstream">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -342,7 +599,51 @@ onMounted(loadGroups)
 
 <style scoped lang="scss">
 .drawer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 12px;
+}
+.filter-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.bulk-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.bulk-count {
+  font-size: 12px;
+}
+.bulk-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.batch-hint {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.batch-result {
+  margin-top: 12px;
+}
+.fail-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+  max-height: 160px;
+  overflow: auto;
 }
 .form-hint {
   margin-left: 10px;

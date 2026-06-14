@@ -20,12 +20,19 @@ type userReq struct {
 	Remark   string `json:"remark"`
 }
 
-// userResp 是代理用户视图（不含密码哈希；含被授权的分组 ID 列表）。
+// userResp 是代理用户视图（admin-only 端点，requireAuth）。
+//
+// 含 pwd（明文连接密码）：D3 决策——「复制代理地址」按钮需产出可直接使用的
+// socks5://<user>-<group>:<pwd>@<server>:<port> URL，故管理端列表回传明文密码。
+// 安全前提：本端点经 requireAuth 保护、仅管理员可访问；ProxyUser 密码本就明文存储
+// （AC-43，连接鉴权微秒级明文比对，仅后台管理员密码用 bcrypt），故此处回传可接受。
 type userResp struct {
-	ID       int64   `json:"id"`
-	Username string  `json:"username"`
-	Remark   string  `json:"remark"`
-	GroupIDs []int64 `json:"groupIds"`
+	ID        int64   `json:"id"`
+	Username  string  `json:"username"`
+	Pwd       string  `json:"pwd"` // 明文连接密码（D3：供「复制代理地址」拼可用 URL）
+	Remark    string  `json:"remark"`
+	AllGroups bool    `json:"allGroups"` // DEC-B1：是否授权全部分组（前端回显授权状态）
+	GroupIDs  []int64 `json:"groupIds"`
 }
 
 // buildUserGroupIndex 反查每个用户被授权的分组 ID（一次性读全量关联，避免 N+1）。
@@ -45,7 +52,7 @@ func toUserResp(u store.ProxyUser, groupIDs []int64) userResp {
 	if groupIDs == nil {
 		groupIDs = []int64{}
 	}
-	return userResp{ID: u.ID, Username: u.Username, Remark: u.Remark, GroupIDs: groupIDs}
+	return userResp{ID: u.ID, Username: u.Username, Pwd: u.Pwd, Remark: u.Remark, AllGroups: u.AllGroups, GroupIDs: groupIDs}
 }
 
 func (a *App) handleListUsers(c *gin.Context) {
@@ -141,12 +148,19 @@ func (a *App) handleDeleteUser(c *gin.Context) {
 	respondOK(c, nil)
 }
 
-// setUserGroupsReq 是设置用户授权分组的请求体（用户维度覆盖式）。
+// setUserGroupsReq 是设置用户授权分组的请求体。
+//
+// 「并存」语义（DEC-B1，Critic 钉死）：allGroups 与 groupIds 是两个【独立维度】，
+// 互不清除。两字段均为指针 = 可选：
+//   - allGroups 非 nil 才更新「授权全部分组」通配标志；切换它【绝不】动 group_user 精细行。
+//   - groupIds  非 nil 才覆盖式设置逐组精细授权；为 nil 时保留原有精细授权不变。
+// 故「开 all_groups → 关 all_groups」不会丢失用户原有的逐组授权。
 type setUserGroupsReq struct {
-	GroupIDs []int64 `json:"groupIds"`
+	AllGroups *bool   `json:"allGroups"`
+	GroupIDs  []int64 `json:"groupIds"`
 }
 
-// handleSetUserGroups 覆盖式设置某代理用户被授权的分组（AC-30，路由 /proxy-users/:id/groups）。
+// handleSetUserGroups 设置某代理用户的授权（AC-1.1/1.2，路由 /proxy-users/:id/groups）。
 func (a *App) handleSetUserGroups(c *gin.Context) {
 	uid, ok := parseIDParam(c, "id")
 	if !ok {
@@ -156,13 +170,29 @@ func (a *App) handleSetUserGroups(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	if err := a.store.SetUserGroups(uid, req.GroupIDs); err != nil {
-		respondError(c, http.StatusInternalServerError, "设置用户授权失败: "+err.Error())
-		return
+
+	// 1) 通配标志（独立维度，永不清精细行）。仅在显式传了 allGroups 时更新。
+	if req.AllGroups != nil {
+		if err := a.store.SetUserAllGroups(uid, *req.AllGroups); err != nil {
+			respondError(c, http.StatusInternalServerError, "设置授权全部分组失败: "+err.Error())
+			return
+		}
 	}
+	// 2) 逐组精细授权（独立维度）。仅在显式传了 groupIds 时覆盖设置；为 nil 则保留原有不动。
+	if req.GroupIDs != nil {
+		if err := a.store.SetUserGroups(uid, req.GroupIDs); err != nil {
+			respondError(c, http.StatusInternalServerError, "设置用户授权失败: "+err.Error())
+			return
+		}
+	}
+
 	if !a.rebuildAndSwap(c) {
 		return
 	}
-	a.logger.Info("设置用户授权分组", "userId", uid, "groupIds", req.GroupIDs)
+	allGroups := false
+	if req.AllGroups != nil {
+		allGroups = *req.AllGroups
+	}
+	a.logger.Info("设置用户授权分组", "userId", uid, "allGroups", allGroups, "groupIds", req.GroupIDs)
 	respondOK(c, nil)
 }

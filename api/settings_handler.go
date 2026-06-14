@@ -6,11 +6,14 @@
 package api
 
 import (
+	"net"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"deeproxy/internal/logging"
+	"deeproxy/internal/netutil"
 	"deeproxy/store"
 )
 
@@ -35,6 +38,12 @@ type settingsResp struct {
 	IdleTimeoutSec int    `json:"idleTimeoutSec"` // 空闲超时（秒）
 	SniffDomain    bool   `json:"sniffDomain"`    // 是否启用域名嗅探
 	SniffTimeoutMs int    `json:"sniffTimeoutMs"` // 嗅探首包等待超时（毫秒）
+
+	// —— v2 批量增强：连接提示与探测池 ——
+	ServerAddr    string `json:"serverAddr"`    // 服务器域名/IP（连接示例/复制地址用；首次为空时回探测值）
+	ProbePoolSize int    `json:"probePoolSize"` // 健康检查全局协程池大小（默认 150）
+	Socks5Port    int    `json:"socks5Port"`    // 本地 SOCKS5 监听端口（前端连接示例优先从这里取）
+	WebPort       int    `json:"webPort"`       // Web 后台监听端口
 }
 
 func (a *App) handleGetSettings(c *gin.Context) {
@@ -42,6 +51,17 @@ func (a *App) handleGetSettings(c *gin.Context) {
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "读取系统设置失败: "+err.Error())
 		return
+	}
+	// 首次默认：server_addr 为空时回探测到的本机非回环 IPv4 作为提示（不落库，仅展示默认值；
+	// 用户保存后才持久化。这样空库首屏即有可用提示，又不强行写入用户未确认的值）。
+	serverAddr := ss.ServerAddr
+	if serverAddr == "" {
+		serverAddr = netutil.DetectLocalIP()
+	}
+	// probe_pool_size 兜底：旧库迁移后即为 150，但防御性兜底避免展示 0。
+	probePoolSize := ss.ProbePoolSize
+	if probePoolSize <= 0 {
+		probePoolSize = 150
 	}
 	respondOK(c, settingsResp{
 		AdminUser:         ss.AdminUser,
@@ -58,6 +78,10 @@ func (a *App) handleGetSettings(c *gin.Context) {
 		IdleTimeoutSec: ss.IdleTimeoutSec,
 		SniffDomain:    ss.SniffDomain,
 		SniffTimeoutMs: ss.SniffTimeoutMs,
+		ServerAddr:     serverAddr,
+		ProbePoolSize:  probePoolSize,
+		Socks5Port:     portOf(a.cfg.Listen),
+		WebPort:        portOf(a.cfg.AdminListen),
 	})
 }
 
@@ -72,6 +96,10 @@ type settingsReq struct {
 	IdleTimeoutSec int    `json:"idleTimeoutSec"`
 	SniffDomain    *bool  `json:"sniffDomain"`
 	SniffTimeoutMs int    `json:"sniffTimeoutMs"`
+
+	// v2 批量增强：ServerAddr 用 *string 区分「未传」与「显式清空」（允许用户清空回退探测）。
+	ServerAddr    *string `json:"serverAddr"`
+	ProbePoolSize int     `json:"probePoolSize"` // <=0 视为不改，保留原值
 }
 
 // validSettingActions 校验默认动作取值（非法即拒，避免坏数据进库/快照）。
@@ -132,6 +160,14 @@ func (a *App) handleUpdateSettings(c *gin.Context) {
 	}
 	if req.SniffDomain != nil { // *bool：显式传了才改（含 false=关闭嗅探）
 		ss.SniffDomain = *req.SniffDomain
+	}
+
+	// v2 批量增强字段。
+	if req.ServerAddr != nil { // *string：显式传了才改（含 ""=清空回退探测）
+		ss.ServerAddr = *req.ServerAddr
+	}
+	if req.ProbePoolSize > 0 { // <=0 视为不改，避免漏传清零（health 每轮读它，0 会让池退化）
+		ss.ProbePoolSize = req.ProbePoolSize
 	}
 
 	if err := a.store.UpdateSystemSetting(ss); err != nil {
@@ -197,4 +233,46 @@ func (a *App) handleChangeAdminPassword(c *gin.Context) {
 	clearSessionCookie(c)
 	a.logger.Warn("管理员密码已修改，所有会话已失效")
 	respondOK(c, nil)
+}
+
+// serverInfoResp 是首页连接提示所需的服务器信息（AC-2.6/4.2/4.3）：
+// 服务器域名/IP + 监听端口，供前端拼出真实连接示例与「复制代理地址」。
+type serverInfoResp struct {
+	ServerAddr string `json:"serverAddr"` // 服务器域名/IP（设置值优先，空则回探测的本机 IP）
+	Socks5Port int    `json:"socks5Port"` // 本地 SOCKS5 监听端口
+	WebPort    int    `json:"webPort"`    // Web 后台监听端口
+}
+
+// handleServerInfo 暴露监听端口与服务器地址给前端（T4.2，路由 GET /settings/server-info）。
+//
+// 端口来源于启动引导配置 cfg.Listen/AdminListen（非业务数据，进程级固定）；
+// serverAddr 来源于系统设置（用户可改），为空时回探测本机非回环 IPv4 作默认提示。
+func (a *App) handleServerInfo(c *gin.Context) {
+	ss, err := a.store.GetSystemSetting()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取系统设置失败: "+err.Error())
+		return
+	}
+	serverAddr := ss.ServerAddr
+	if serverAddr == "" {
+		serverAddr = netutil.DetectLocalIP()
+	}
+	respondOK(c, serverInfoResp{
+		ServerAddr: serverAddr,
+		Socks5Port: portOf(a.cfg.Listen),
+		WebPort:    portOf(a.cfg.AdminListen),
+	})
+}
+
+// portOf 从 "host:port" 监听地址提取端口号；解析失败返回 0。
+func portOf(listen string) int {
+	_, p, err := net.SplitHostPort(listen)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(p)
+	if err != nil {
+		return 0
+	}
+	return port
 }

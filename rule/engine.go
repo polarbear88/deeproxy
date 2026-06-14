@@ -71,8 +71,12 @@ func NewEngine(specs []config.RuleSpec, def Action) (*Engine, error) {
 		switch prefix {
 		case "domain":
 			r.kind = kindDomain
+			// 域名规范化（AC-5.4）：统一小写 + 去尾点，使规则与目标在同一形态下比较，
+			// 避免「Google.com / google.com.」因大小写或 FQDN 尾点导致漏匹配。
+			r.pattern = canonicalizeDomain(pattern)
 		case "domain-suffix":
 			r.kind = kindDomainSuffix
+			r.pattern = canonicalizeDomain(pattern)
 		case "ip-cidr":
 			r.kind = kindIPCIDR
 			_, ipNet, err := net.ParseCIDR(pattern)
@@ -100,6 +104,11 @@ func (e *Engine) Match(host string) Action {
 // 当 IP 目标未命中任何 ip-cidr 规则时，才需要嗅探域名再判一次。
 func (e *Engine) MatchRule(host string) (action Action, matched bool) {
 	ip := net.ParseIP(host) // 非 nil 表示 host 是 IP 字面量
+	// 仅当目标是域名时做规范化（小写 + 去尾点），与入库时规范化的 pattern 同形比较（AC-5.4）。
+	// IP 字面量不走此路径（net.ParseIP 已解析，大小写/尾点不适用）。
+	if ip == nil {
+		host = canonicalizeDomain(host)
+	}
 	for _, r := range e.rules {
 		switch r.kind {
 		case kindDomain:
@@ -126,4 +135,16 @@ func (e *Engine) MatchRule(host string) (action Action, matched bool) {
 // isValidAction 判断动作是否为三枚举之一。
 func isValidAction(a Action) bool {
 	return a == ActionForward || a == ActionDirect || a == ActionReject
+}
+
+// canonicalizeDomain 规范化域名形态（AC-5.4）：统一转小写并去除末尾的根点（FQDN 尾点）。
+//
+// 为什么需要：DNS 域名大小写不敏感，且 "google.com." 与 "google.com" 指向同一域名；
+// 客户端经 socks5h 发来的目标域名可能含尾点或混合大小写，若不归一会漏匹配规则。
+// 规则 pattern 入库时与目标 host 匹配时都过此函数，保证两侧同形比较。
+func canonicalizeDomain(host string) string {
+	host = strings.ToLower(host)
+	// 去掉末尾根点；保留中间点。空串或单独 "." 归一为空串（不影响匹配语义）。
+	host = strings.TrimSuffix(host, ".")
+	return host
 }

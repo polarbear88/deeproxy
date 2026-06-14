@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"deeproxy/snapbuild"
 	"deeproxy/store"
 )
 
@@ -117,6 +118,21 @@ func (a *App) handleImportConfig(c *gin.Context) {
 	backup, err := a.collectConfigData()
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, "导入前备份失败: "+err.Error())
+		return
+	}
+
+	// DEC-A1 写前候选校验（AC-5.1，补 import 写路径漏洞）：import 是【整体覆盖】，
+	// bundle 的 Rules/RuleGroups 即导入后的最终规则全集；用它构造候选喂给同一套
+	// snapbuild.ValidateRuleset 编译校验。若含坏规则（非法 match/CIDR/action），
+	// 挡在 ImportBundle【之前】返回 400，DB 不写、快照不分裂（修复 split-brain）。
+	// 默认动作用【当前已提交】系统设置（import 不改 system_setting，import_repo 跳过该表）。
+	ss, err := a.store.GetSystemSetting()
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取系统设置失败: "+err.Error())
+		return
+	}
+	if err := snapbuild.ValidateRuleset(req.Data.Rules, req.Data.RuleGroups, ss.DefaultAction); err != nil {
+		respondError(c, http.StatusBadRequest, "导入配置含非法规则，已拒绝（配置未变更）: "+err.Error())
 		return
 	}
 

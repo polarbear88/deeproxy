@@ -81,8 +81,10 @@ router.beforeEach(async (to) => {
     return true
   }
 
-  // 检查系统初始化状态（仅在尚未确认时查一次，失败不阻塞放行交由接口 401 处理）
-  if (userStore.initialized) {
+  // 检查系统初始化状态（仅在尚未向后端确认过时查一次，失败不阻塞放行交由接口 401 处理）。
+  // 用 initChecked 而非 initialized 作判据：initialized 默认 true，健康系统下恒为 true，
+  // 旧条件 if (userStore.initialized) 会导致每次路由切换都重复请求 init 接口。
+  if (!userStore.initChecked) {
     try {
       const ok = await userStore.fetchInitStatus()
       if (!ok) {

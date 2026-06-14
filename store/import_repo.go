@@ -45,9 +45,9 @@ func (s *Store) ImportBundle(b ConfigBundle) error {
 		// —— 2. 代理用户 ——
 		for _, u := range b.Users {
 			if _, err := tx.Exec(
-				`INSERT INTO proxy_user (id, username, pwd, remark, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?)`,
-				u.ID, u.Username, u.Pwd, u.Remark, ts, ts,
+				`INSERT INTO proxy_user (id, username, pwd, remark, all_groups, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				u.ID, u.Username, u.Pwd, u.Remark, boolToInt(u.AllGroups), ts, ts,
 			); err != nil {
 				return fmt.Errorf("导入用户 %q 失败: %w", u.Username, err)
 			}

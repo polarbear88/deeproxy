@@ -1,5 +1,10 @@
 package auth
 
+import (
+	"errors"
+	"log/slog"
+)
+
 // Package auth：v2 鉴权与解析内核。
 //
 // credential.go 实现 go-socks5 的 CredentialStore 接口（方法 Valid），是 SOCKS5
@@ -18,12 +23,20 @@ package auth
 // 持有 SnapshotProvider，每次 Valid 时取【当前生效】的快照做鉴权（读到热替换结果）。
 type Credential struct {
 	provider SnapshotProvider
+	// logger 用于在鉴权失败时打结构化日志（AC-1.5 未授权访问分组）。可为 nil（不打日志）。
+	logger *slog.Logger
 }
 
 // NewCredential 用快照提供者构造 Credential。
 // 装配层（server/cmd）传入「返回当前 *snapshot.Snapshot 适配视图」的函数。
 func NewCredential(provider SnapshotProvider) Credential {
 	return Credential{provider: provider}
+}
+
+// NewCredentialWithLogger 与 NewCredential 相同，但额外注入 logger 用于鉴权失败日志（AC-1.5）。
+// logger 为 nil 时退化为不打日志（等价于 NewCredential）。
+func NewCredentialWithLogger(provider SnapshotProvider, logger *slog.Logger) Credential {
+	return Credential{provider: provider, logger: logger}
 }
 
 // Valid 实现 CredentialStore 接口。
@@ -46,7 +59,21 @@ func (c Credential) Valid(user, password, _ /*userAddr*/ string) bool {
 		return false
 	}
 	_, err := Verify(snap, user, password)
-	return err == nil
+	if err != nil {
+		// AC-1.5：仅对「用户存在但未被授权访问目标分组」这一类打结构化日志，
+		// 便于运维定位授权配置问题。其余失败（用户名非法/用户不存在/密码不符）不在此细化日志，
+		// 避免对外暴露可枚举信息、也避免与 server 层的泛化拒连日志重复。
+		// 只在 Valid 阶段打（此处是唯一拿得到原始 user/group 且不会与 Allow/ParseOnly 重复的点）。
+		var ae *AuthError
+		if c.logger != nil && errors.As(err, &ae) && ae.Kind == AuthErrUnauthorizedGroup {
+			// 解析用户名取 user/group 段用于日志（纯字符串解析，无 I/O）。
+			if pu, perr := ParseUsername(user); perr == nil {
+				c.logger.Warn("用户访问分组未授权", "user", pu.User, "group", pu.Group)
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // Verify 是【完整鉴权】公共入口（解析 + 授权 + 明文密码比对），仅 Valid 阶段调用。

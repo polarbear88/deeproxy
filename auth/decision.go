@@ -36,7 +36,21 @@ type Decision struct {
 // 避免泄露「用户是否存在/密码是否正确」等可被枚举利用的信息）。
 type AuthError struct {
 	Reason string
+	// Kind 是失败分类，供上层（Credential.Valid）精确识别「未授权访问分组」这一类，
+	// 以便只对该类打结构化日志（AC-1.5），而不靠脆弱的 Reason 字符串匹配，也避免对其他
+	// 失败类型重复/误打日志。零值 AuthErrUnspecified 表示未分类。
+	Kind AuthErrorKind
 }
+
+// AuthErrorKind 是鉴权失败的分类枚举。
+type AuthErrorKind int
+
+const (
+	// AuthErrUnspecified 未分类失败（用户名非法/用户不存在/密码不符等）。
+	AuthErrUnspecified AuthErrorKind = iota
+	// AuthErrUnauthorizedGroup 用户存在但未被授权访问目标分组（AC-1.5 专用日志类）。
+	AuthErrUnauthorizedGroup
+)
 
 func (e *AuthError) Error() string {
 	return "鉴权失败: " + e.Reason
