@@ -9,7 +9,7 @@ import { useI18n } from 'vue-i18n'
 import EChart from '@/components/EChart.js'
 import * as groupApi from '@/api/group'
 import * as dashApi from '@/api/dashboard'
-import { formatBytes, formatNumber } from '@/utils/format'
+import { formatBytes, formatNumber, formatBucketTime, formatAxisTime } from '@/utils/format'
 import { useAppStore } from '@/stores/app'
 
 // i18n：组件③类型改名、组件⑤「流量」按钮、组件⑦校验文案均经 t() 翻译
@@ -337,7 +337,7 @@ async function testUpstream(row) {
 }
 
 // ===== 分组独立流量图 =====
-const groupTs = ref({ times: [], up: [], down: [] })
+const groupTs = ref({ times: [], up: [], down: [], req: [] })
 const groupTopDomains = ref([])
 // 组件⑤：Type A 动态上游流量图表抽屉（仅含图表，不含上游池表格）。
 // 独立于 upstreamDrawer，复用 loadGroupChart / groupChartOption / groupTopDomainOption。
@@ -352,7 +352,7 @@ async function loadGroupChart(groupId) {
     const d = await dashApi.getTimeseries({ window: '24h', groupId })
     if (d) groupTs.value = d
   } catch {
-    groupTs.value = { times: [], up: [], down: [] }
+    groupTs.value = { times: [], up: [], down: [], req: [] }
   }
   // 该分组 Top 目标域名（独立 try/catch，互不影响时序图加载）。
   try {
@@ -362,14 +362,36 @@ async function loadGroupChart(groupId) {
   }
 }
 const groupChartOption = computed(() => ({
-  tooltip: { trigger: 'axis' },
-  legend: { data: [t('proxyGroups.legendUp'), t('proxyGroups.legendDown')] },
-  grid: { left: 50, right: 20, top: 30, bottom: 30 },
-  xAxis: { type: 'category', boundaryGap: false, data: groupTs.value.times },
-  yAxis: { type: 'value', axisLabel: { formatter: (v) => formatBytes(v) } },
+  // tooltip 标题把后端桶时间格式化为 2000/01/01 00:00:00 样式（与首页流量图一致）；
+  // 上行/下行按字节可读化，请求数按千分位，避免显示原始 RFC3339 字符串与裸数字。
+  tooltip: {
+    trigger: 'axis',
+    formatter: (params) => {
+      if (!params || !params.length) return ''
+      const title = formatBucketTime(params[0].axisValue)
+      const reqName = t('proxyGroups.legendReq')
+      const lines = params.map((p) => {
+        const val = p.seriesName === reqName ? formatNumber(p.value) : formatBytes(p.value)
+        return `${p.marker}${p.seriesName}: ${val}`
+      })
+      return [title, ...lines].join('<br/>')
+    },
+  },
+  legend: { data: [t('proxyGroups.legendUp'), t('proxyGroups.legendDown'), t('proxyGroups.legendReq')] },
+  // containLabel 让 ECharts 按双侧刻度文字实际宽度预留空间，
+  // 避免左轴 formatBytes 长文本（如 "1.23 MB"）被容器左边缘截断（右轴请求数同理）。
+  grid: { left: 8, right: 8, top: 40, bottom: 30, containLabel: true },
+  // X 轴底部时间标签格式化为紧凑 "MM/DD HH:mm"，避免显示原始 RFC3339 字符串。
+  xAxis: { type: 'category', boundaryGap: false, data: groupTs.value.times, axisLabel: { formatter: (v) => formatAxisTime(v) } },
+  // 双 Y 轴：左轴流量（字节可读化），右轴请求数（与首页仪表盘流量图同形态）。
+  yAxis: [
+    { type: 'value', name: t('proxyGroups.axisTraffic'), axisLabel: { formatter: (v) => formatBytes(v) } },
+    { type: 'value', name: t('proxyGroups.axisReq'), position: 'right' },
+  ],
   series: [
     { name: t('proxyGroups.legendUp'), type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.up },
     { name: t('proxyGroups.legendDown'), type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.down },
+    { name: t('proxyGroups.legendReq'), type: 'line', yAxisIndex: 1, smooth: true, data: groupTs.value.req },
   ],
 }))
 

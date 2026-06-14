@@ -348,6 +348,9 @@ export default {
     topDomains: 'Top 目标域名',
     legendUp: '上行',
     legendDown: '下行',
+    legendReq: '请求数',
+    axisTraffic: '流量',
+    axisReq: '请求',
     // 上游编辑/添加
     editUpstream: '编辑上游',
     upstreamHostPlaceholder: '域名或 IP',

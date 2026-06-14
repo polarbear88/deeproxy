@@ -67,7 +67,16 @@ export default {
     function resize() {
       // 无尺寸时（隐藏态）不 resize，避免画布被压缩成 0 尺寸
       if (!hasSize()) return
-      chart && chart.resize()
+      // 关键修复：容器从 0 尺寸变为可见时补建实例。
+      // 抽屉/弹窗/标签页等场景下，组件 onMounted 时容器仍是 0 尺寸（抽屉滑入动画/display:none），
+      // createChart 会被 hasSize 守卫跳过导致 chart 为 null；此后即使容器获得尺寸，
+      // 若 resize 仅做 chart.resize()（chart 为 null 时是空操作），图表将永远不渲染。
+      // 因此这里在 chart 缺失但容器已有尺寸时补建一次，由 ResizeObserver 触发，覆盖延迟可见场景。
+      if (!chart) {
+        createChart()
+        return
+      }
+      chart.resize()
     }
 
     onMounted(() => {

@@ -345,6 +345,9 @@ export default {
     topDomains: 'Top Target Domains',
     legendUp: 'Upload',
     legendDown: 'Download',
+    legendReq: 'Requests',
+    axisTraffic: 'Traffic',
+    axisReq: 'Requests',
     // Upstream edit/add
     editUpstream: 'Edit Upstream',
     upstreamHostPlaceholder: 'Domain or IP',

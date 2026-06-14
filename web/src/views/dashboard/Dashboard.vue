@@ -13,7 +13,7 @@ import StatCard from '@/components/StatCard.vue'
 import { useThemeStore } from '@/stores/theme'
 import * as dashApi from '@/api/dashboard'
 import { getServerInfo } from '@/api/system'
-import { formatBytes, formatRate, formatNumber, formatUptime, formatBucketTime } from '@/utils/format'
+import { formatBytes, formatRate, formatNumber, formatUptime, formatBucketTime, formatAxisTime } from '@/utils/format'
 
 // i18n：仅展示层翻译，统计数据 name 字段（forward/direct/reject）保持原始值
 const { t } = useI18n()
@@ -178,8 +178,10 @@ const tsOption = computed(() => ({
     },
   },
   legend: { data: [t('dashboard.legendUp'), t('dashboard.legendDown'), t('dashboard.legendReq')] },
-  grid: { left: 50, right: 50, top: 40, bottom: 30 },
-  xAxis: { type: 'category', boundaryGap: false, data: tsData.value.times },
+  // containLabel 让 ECharts 按双侧刻度文字实际宽度预留空间，
+  // 避免左轴 formatBytes 长文本（如 "1.23 MB"）被容器左边缘截断（右轴请求数同理）。
+  grid: { left: 8, right: 8, top: 40, bottom: 30, containLabel: true },
+  xAxis: { type: 'category', boundaryGap: false, data: tsData.value.times, axisLabel: { formatter: (v) => formatAxisTime(v) } },
   yAxis: [
     { type: 'value', name: t('dashboard.axisTraffic'), axisLabel: { formatter: (v) => formatBytes(v) } },
     { type: 'value', name: t('dashboard.axisReq'), position: 'right' },

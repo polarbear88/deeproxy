@@ -73,3 +73,16 @@ export function formatBucketTime(label) {
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   )
 }
+
+// 把桶时间标签格式化为 X 轴底部用的紧凑样式 "MM/DD HH:mm"。
+// 与 formatBucketTime 复用同一套解析逻辑（RFC3339 / "YYYY-MM-DD HH" 两种形态），
+// 但省去年份与秒，避免 X 轴标签过长重叠；解析失败原样返回，保证轴不至于空白。
+export function formatAxisTime(label) {
+  if (!label) return ''
+  const s = String(label)
+  const hourBucket = /^(\d{4})-(\d{2})-(\d{2}) (\d{2})$/.exec(s)
+  const d = hourBucket ? new Date(`${hourBucket[1]}-${hourBucket[2]}-${hourBucket[3]}T${hourBucket[4]}:00:00`) : new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  const pad = (x) => String(x).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
