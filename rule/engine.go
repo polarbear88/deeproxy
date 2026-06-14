@@ -56,7 +56,19 @@ func NewEngine(specs []config.RuleSpec, def Action) (*Engine, error) {
 	if !isValidAction(def) {
 		return nil, fmt.Errorf("默认动作非法: %q", def)
 	}
-	e := &Engine{defaultAction: def}
+	rules, err := compileSpecs(specs)
+	if err != nil {
+		return nil, err
+	}
+	return &Engine{rules: rules, defaultAction: def}, nil
+}
+
+// compileSpecs 把规则规格列表逐条编译为内部 rule（ip-cidr 预编译 *net.IPNet、域名规范化）。
+// 任一规则非法（缺前缀 / 前缀未知 / CIDR 非法 / 动作非法）返回 error。
+//
+// 抽出为独立函数（DRY）：NewEngine 与 CompileRules 共用同一编译核心，避免两份编译逻辑漂移。
+func compileSpecs(specs []config.RuleSpec) ([]rule, error) {
+	rules := make([]rule, 0, len(specs))
 	for i, s := range specs {
 		prefix, pattern, ok := strings.Cut(s.Match, ":")
 		if !ok {
@@ -87,9 +99,52 @@ func NewEngine(specs []config.RuleSpec, def Action) (*Engine, error) {
 		default:
 			return nil, fmt.Errorf("第 %d 条规则 match 前缀未知: %q", i+1, prefix)
 		}
-		e.rules = append(e.rules, r)
+		rules = append(rules, r)
 	}
-	return e, nil
+	return rules, nil
+}
+
+// CompiledRules 是一段【已编译】的规则序列，可被多个 Engine 复用拼接（P2/D① 优化用）。
+//
+// 为什么需要：全局规则段在每个分组的合并引擎里都排在最前，原实现对每个分组都重新编译
+// 一遍全局规则（O(分组数 × 全局规则数) 的 net.ParseCIDR/canonicalize 浪费）。把全局段
+// 【编译一次】封装为 CompiledRules，再让各分组引擎复用，即把全局编译降为 O(全局规则数)。
+//
+// 不可变性：内部 rules 是只读编译产物（与 Engine.rules 同类），构造后不再修改；
+// NewEngineWithGlobal 拼接时复制到新切片、绝不原地改 CompiledRules，故可被任意多个
+// Engine 安全共享（与现有「快照不可变 + 跨快照共享只读对象」语义一致）。
+type CompiledRules struct {
+	rules []rule
+}
+
+// CompileRules 把规则规格列表编译为可复用的 CompiledRules（编译一次、多处拼接）。
+// 编译同时即完成校验：非法规则返回 error（供 Rebuild 在写前/重建时快速失败 G4）。
+func CompileRules(specs []config.RuleSpec) (CompiledRules, error) {
+	rules, err := compileSpecs(specs)
+	if err != nil {
+		return CompiledRules{}, err
+	}
+	return CompiledRules{rules: rules}, nil
+}
+
+// NewEngineWithGlobal 用【已编译的全局段】+【本分组规则规格】构建分组引擎（D① 核心入口）。
+//
+// 语义等价于 NewEngine(global规格 ++ groupSpecs, def)，但全局段不再重复编译——直接复用
+// 传入的 CompiledRules，只编译本分组自己的（通常很少的）规则。顺序保持「全局在前、分组在后」，
+// 与 MergeRuleGroups 一致。任一分组规则非法或默认动作非法返回 error（G4）。
+func NewEngineWithGlobal(global CompiledRules, groupSpecs []config.RuleSpec, def Action) (*Engine, error) {
+	if !isValidAction(def) {
+		return nil, fmt.Errorf("默认动作非法: %q", def)
+	}
+	groupRules, err := compileSpecs(groupSpecs)
+	if err != nil {
+		return nil, err
+	}
+	// 拼接到全新切片：绝不原地改 global.rules（其被所有分组共享、必须保持只读）。
+	rules := make([]rule, 0, len(global.rules)+len(groupRules))
+	rules = append(rules, global.rules...)
+	rules = append(rules, groupRules...)
+	return &Engine{rules: rules, defaultAction: def}, nil
 }
 
 // Match 对目标主机做顺序首匹配，返回命中规则的动作；不命中返回默认动作。

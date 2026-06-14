@@ -146,15 +146,16 @@ func Rebuild(st *store.Store, cfg *config.Config) (*snapshot.Snapshot, error) {
 		globalSpecs = append(globalSpecs, rule.RuleGroupSpec{Name: rg.Name, Specs: rulesByRG[rg.ID]})
 	}
 
-	// 全局规则的【独立校验】：BuildGroupEngine 只在 for group 循环里被调用，
-	// 当没有任何分组时，非法的全局规则（如坏 CIDR）将永远不会被编译、从而漏过校验。
-	// 这违反 G4 快速失败原则（坏配置写入应让 Rebuild 失败、由后台回错给前端，
-	// 而非静默 Swap 一个隐藏坏规则的快照）。故此处无论是否有分组，都先把全局规则
-	// 单独编译一次以触发校验；编译产物丢弃（真正生效的引擎仍按分组各自编译）。
-	if len(globalSpecs) > 0 {
-		if _, err := rule.BuildGroupEngine(globalSpecs, nil, def); err != nil {
-			return nil, fmt.Errorf("全局规则校验失败: %w", err)
-		}
+	// 全局规则【编译一次】（D① 性能优化）：全局规则段在每个分组的合并引擎里都排在最前，
+	// 原实现对每个分组都重新编译一遍全局规则（O(分组数 × 全局规则数) 的 net.ParseCIDR/
+	// canonicalize 浪费）。这里把全局段编译一次为可复用的 CompiledRules，各分组引擎直接复用，
+	// 把全局编译降为 O(全局规则数)。
+	//
+	// 编译同时即完成全局规则的【独立校验】：无论是否有分组，全局坏规则（如坏 CIDR）都会在此
+	// 被编译触发而 return error（G4 快速失败），不再依赖「至少有一个分组」才校验到（旧 bug）。
+	globalCompiled, err := rule.CompileRules(rule.MergeRuleGroups(globalSpecs, nil))
+	if err != nil {
+		return nil, fmt.Errorf("全局规则校验失败: %w", err)
 	}
 
 	// 分组 → 其关联的规则组 ID 列表。
@@ -184,7 +185,9 @@ func Rebuild(st *store.Store, cfg *config.Config) (*snapshot.Snapshot, error) {
 			groupSpecs = append(groupSpecs, rule.RuleGroupSpec{Name: rg.Name, Specs: rulesByRG[rg.ID]})
 		}
 
-		eng, err := rule.BuildGroupEngine(globalSpecs, groupSpecs, def)
+		// D①：复用已编译的全局段，只编译本分组自己的规则段再拼接（全局段不重复编译）。
+		// MergeRuleGroups(nil, groupSpecs) 仅扁平化分组段为有序 RuleSpec（全局段传 nil）。
+		eng, err := rule.NewEngineWithGlobal(globalCompiled, rule.MergeRuleGroups(nil, groupSpecs), def)
 		if err != nil {
 			return nil, fmt.Errorf("分组 %q(id=%d) 规则预编译失败: %w", g.Name, g.ID, err)
 		}
