@@ -291,12 +291,19 @@ async function testUpstream(row) {
 
 // ===== 分组独立流量图 =====
 const groupTs = ref({ times: [], up: [], down: [] })
+const groupTopDomains = ref([])
 async function loadGroupChart(groupId) {
   try {
     const d = await dashApi.getTimeseries({ window: '24h', groupId })
     if (d) groupTs.value = d
   } catch {
     groupTs.value = { times: [], up: [], down: [] }
+  }
+  // 该分组 Top 目标域名（独立 try/catch，互不影响时序图加载）。
+  try {
+    groupTopDomains.value = (await dashApi.getTopN({ kind: 'domain', limit: 10, groupId })) || []
+  } catch {
+    groupTopDomains.value = []
   }
 }
 const groupChartOption = computed(() => ({
@@ -308,6 +315,22 @@ const groupChartOption = computed(() => ({
   series: [
     { name: '上行', type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.up },
     { name: '下行', type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.down },
+  ],
+}))
+
+// 该分组 Top 目标域名横向柱状图（绑定后端 domain 的 .count，与仪表盘全局图同形态）。
+const groupTopDomainOption = computed(() => ({
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  grid: { left: 8, right: 24, top: 10, bottom: 10, containLabel: true },
+  xAxis: { type: 'value' },
+  yAxis: { type: 'category', inverse: true, data: groupTopDomains.value.map((d) => d.name) },
+  series: [
+    {
+      type: 'bar',
+      data: groupTopDomains.value.map((d) => d.count),
+      barMaxWidth: 18,
+      itemStyle: { borderRadius: [0, 4, 4, 0] },
+    },
   ],
 }))
 
@@ -511,6 +534,10 @@ onMounted(loadGroups)
 
       <el-divider content-position="left">分组流量（24h）</el-divider>
       <EChart :option="groupChartOption" height="260px" />
+
+      <el-divider content-position="left">Top 目标域名</el-divider>
+      <EChart v-if="groupTopDomains.length" :option="groupTopDomainOption" height="260px" />
+      <el-empty v-else description="暂无数据" :image-size="50" />
     </el-drawer>
 
     <!-- 上游编辑/添加对话框（添加时支持 单条 / 批量 两 tab）-->

@@ -40,8 +40,7 @@
 
 ## 已知首版占位（team-lead 已批准，记为后续项，不阻塞）
 
-- `GET /dashboard/top?kind=user|domain` → 返回 `[]` + 响应头 `X-Feature-Status: not-implemented`。
-  原因：store 仅有 QueryTopGroups；Top 用户需 QueryTopUsers，Top 域名需对 CONNECT 目标域名埋点（属 stats/server 范畴）。`kind=group` 完整可用。
+- `GET /dashboard/top?kind=domain` → ✅ 已落地，返回 `[{name,count}]`（domain_hit 命中桶 + stats.IncDomain 埋点），支持 `?groupId=`，不再带 `X-Feature-Status` 头。
 - 规则测试器 `matchedRule` 为「target → action」概述串：rule.Engine 当前不暴露命中规则原始表达式文本。
 
 ## 标注说明

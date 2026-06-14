@@ -255,6 +255,7 @@ func (h *handler) dialAndRelay(ctx context.Context, writer io.Writer, req *socks
 	// 动作分布 + 请求数埋点（连接成功建立时）。
 	h.markAction(d)
 	h.counter.IncReq(d.auth.GroupID, d.auth.UserID)
+	h.counter.IncDomain(d.host, d.auth.GroupID) // 目标域名命中埋点（纯 IP 也计入）
 	h.logger.Info("转发", "host", d.host, "action", d.action, "group", d.auth.Group)
 
 	// 双向中继（纯 io.Copy 热路径）；结束后一次性埋点字节数 + 写审计。
@@ -371,6 +372,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 	}
 	h.markAction(d)
 	h.counter.IncReq(d.auth.GroupID, d.auth.UserID)
+	h.counter.IncDomain(routeHost, d.auth.GroupID) // 嗅探后 routeHost 更准（嗅出域名则记域名，否则记 IP）
 	h.logger.Info("嗅探转发", "host", routeHost, "action", action)
 
 	up, down, relErr := relayCounted(writer, req.Reader, upConn)

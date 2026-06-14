@@ -101,32 +101,52 @@ func (f *Flusher) Run(ctx context.Context) {
 	}
 }
 
-// flushOnce 收集本周期增量并批量落库。无增量时直接返回。
+// flushOnce 收集本周期增量并批量落库。流量桶与域名命中桶【独立 flush】：
+// 各自收集、各自判空、各自落库（同一分钟桶时间），两者皆空时才直接返回。
 func (f *Flusher) flushOnce() {
 	dims := f.counter.CollectDeltas()
-	if len(dims) == 0 {
+	domDeltas := f.counter.CollectDomainDeltas()
+	if len(dims) == 0 && len(domDeltas) == 0 {
 		return
 	}
 
-	// 当前分钟桶时间（所有本周期增量归入此桶；store 侧会 upsert 累加）。
+	// 当前分钟桶时间（本周期所有增量归入此桶；两 repo 各自 upsert 累加）。
 	bucket := store.TruncateToMinute(time.Now())
 
-	deltas := make([]store.StatDelta, 0, len(dims))
-	for _, d := range dims {
-		deltas = append(deltas, store.StatDelta{
-			GroupID:    d.GroupID,
-			UserID:     d.UserID,
-			BucketTime: bucket,
-			UpBytes:    d.UpBytes,
-			DownBytes:  d.DownBytes,
-			ReqCount:   d.ReqCount,
-		})
+	// 流量桶（dims 非空才有实际写；FlushTrafficStats 内部亦有 len==0 守卫）。
+	if len(dims) > 0 {
+		deltas := make([]store.StatDelta, 0, len(dims))
+		for _, d := range dims {
+			deltas = append(deltas, store.StatDelta{
+				GroupID:    d.GroupID,
+				UserID:     d.UserID,
+				BucketTime: bucket,
+				UpBytes:    d.UpBytes,
+				DownBytes:  d.DownBytes,
+				ReqCount:   d.ReqCount,
+			})
+		}
+		if err := f.store.FlushTrafficStats(deltas); err != nil {
+			// 落库失败不影响转发；记录告警，本周期差分增量会丢失——
+			// 这是可接受的统计精度损失（统计非关键路径，且失败应极罕见）。
+			f.logger.Warn("统计 flush 落库失败", "err", err, "dims", len(deltas))
+		}
 	}
 
-	if err := f.store.FlushTrafficStats(deltas); err != nil {
-		// 落库失败不影响转发；记录告警，增量已从计数器差分扣除会丢失——
-		// 这是可接受的统计精度损失（统计非关键路径，且失败应极罕见）。
-		f.logger.Warn("统计 flush 落库失败", "err", err, "dims", len(deltas))
+	// 域名命中桶（独立判断：dims 为空、domDeltas 非空时仍落库；同一 bucket）。
+	if len(domDeltas) > 0 {
+		dd := make([]store.DomainDelta, 0, len(domDeltas))
+		for _, d := range domDeltas {
+			dd = append(dd, store.DomainDelta{
+				Domain:     d.Domain,
+				GroupID:    d.GroupID,
+				BucketTime: bucket,
+				HitCount:   d.HitCount,
+			})
+		}
+		if err := f.store.FlushDomainHits(dd); err != nil {
+			f.logger.Warn("域名命中 flush 落库失败", "err", err, "n", len(dd))
+		}
 	}
 }
 
@@ -143,5 +163,15 @@ func (f *Flusher) cleanupOnce() {
 	}
 	if n > 0 {
 		f.logger.Info("已清理过期统计桶", "rows", n, "cutoff", cutoff.Format(time.RFC3339))
+	}
+
+	// 域名命中桶用同一 cutoff 一并清理（与流量桶同保留期）。
+	dn, err := f.store.CleanupDomainHitsBefore(cutoff)
+	if err != nil {
+		f.logger.Warn("清理过期域名命中桶失败", "err", err)
+		return
+	}
+	if dn > 0 {
+		f.logger.Info("已清理过期域名命中桶", "rows", dn, "cutoff", cutoff.Format(time.RFC3339))
 	}
 }

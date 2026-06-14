@@ -25,7 +25,7 @@
 - ✅【SSE 已修正】/syslog/stream 改发**默认(无名)事件**（sse.Encode Event 名为空），前端 EventSource.onmessage 可正常接收（原命名事件 "log" 会收不到）。
 - ✅ uptimeSec / runtime 内存+goroutine：API 层自取（App.startedAt + runtime 包）。
 - ✅ upRate/downRate：API 层基于「今日累计字节」两次 overview 采样差值算出（免改 stats）。
-- ⚠️【仍存依赖缺口，已显式占位】/dashboard/top：kind=group 与 kind=user 已落地返回 `[{name,bytes}]`；**kind=domain 返回空数组并带响应头 `X-Feature-Status: not-implemented`**（前端显示"首版暂不支持"），因 Top 域名需对 CONNECT 目标按连接维度埋点(traffic_stat 无 domain 维度，属 T5/T6 后续)。
+- ✅【已落地】/dashboard/top：kind=group 与 kind=user 返回 `[{name,bytes}]`；**kind=domain 返回 `[{name,count}]`**（按 domain_hit 分钟桶命中次数降序，支持可选 `?groupId=` 过滤；空库返回空数组），不再带 `X-Feature-Status` 头。Top 域名经 stats.IncDomain 对 CONNECT 目标按连接维度埋点（dialAndRelay/handleSniff）+ domain_hit 表落库实现。
 - matchedRule：rule.Engine 仅返回 (action,matched) 不含命中表达式，规则测试器 matchedRule 以「target → action」概述；如需精确命中规则文本，需 rule 包扩展 API（后续）。
 
 
@@ -157,7 +157,7 @@ ProxyUser 形态：`{ id, username, groupIds:[] }`（密码仅写入不回显）
 ## 依赖缺口与待确认项（需其他 worker 配合）
 
 1. **实时速率 upRate/downRate（KB/s）**：stats.Counter 现有累计字节与 active 连接，无瞬时速率。需 T5(worker-4) 在 Counter 暴露速率（如基于上次采样差/时间窗）。**或** 后端在 dashboard 自存上次采样值算差值（API 层可做，倾向此，免改 stats）。
-2. **Top 域名**：store 已有 QueryTopGroups + QueryTopUsers（kind=group/user 已落地）。仅 Top 域名(kind=domain)仍缺——需 T5/T6 对 CONNECT 目标域名按连接维度埋点（traffic_stat 无 domain 维度，spec AC-27）。kind=domain 返回空数组 + X-Feature-Status 头，待埋点补齐。
+2. **Top 域名**：✅ 已落地。store 提供 QueryTopDomains（domain_hit 分钟桶），stats.IncDomain 对 CONNECT 目标域名按连接维度埋点（dialAndRelay/handleSniff，纯 IP 也计入），flush worker 同周期落库、按保留期清理。kind=domain 返回 `[{name,count}]`，支持 `?groupId=` 全局/分组查询。
 3. **runtime 内存/goroutine**：API 层用 runtime.ReadMemStats + runtime.NumGoroutine 自取即可，无需他人。
 4. **uptimeSec**：需进程启动时间，cmd(T9) 装配时传入 App，或 App 内记 NewApp 时间。
 5. **SSE event 名对齐**：后端 c.SSEvent("log",...) 发命名事件 `log`；前端 EventSource 若用 onmessage 收的是默认(无名)事件，收不到 `log` 命名事件。需统一——**建议后端发默认事件**（c.Render SSE 不带 event 名）或前端 addEventListener('log',...)。请 worker-4 确认前端监听方式。

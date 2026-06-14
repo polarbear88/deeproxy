@@ -20,6 +20,8 @@ export function getActionDist(params) {
 // Top N 排行：kind: 'group'|'user'|'domain'
 export function getTopN(params) {
   // params: { kind, limit, window? }
+  //   - group/user：返回 [{ name, bytes }]
+  //   - domain：返回 [{ name, count }]，可选 groupId 过滤（缺省=全局，传 groupId 则仅该分组）
   return request.get('/dashboard/top', { params })
 }
 

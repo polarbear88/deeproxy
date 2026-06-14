@@ -36,6 +36,7 @@ const tsData = ref({ times: [], up: [], down: [], req: [] })
 const actionDist = ref([])
 const topGroups = ref([])
 const topUsers = ref([])
+const topDomains = ref([])
 
 const themeStore = useThemeStore()
 
@@ -101,17 +102,20 @@ async function loadActionDist() {
   }
 }
 async function loadTop() {
-  // Top 分组、Top 用户已落地真实数据；Top 域名仍占位（需 CONNECT 目标域名埋点）。
+  // Top 分组、Top 用户、Top 目标域名均已落地真实数据。
   try {
-    const [g, u] = await Promise.all([
+    const [g, u, d] = await Promise.all([
       dashApi.getTopN({ kind: 'group', limit: 5 }),
       dashApi.getTopN({ kind: 'user', limit: 5 }),
+      dashApi.getTopN({ kind: 'domain', limit: 10 }),
     ])
     topGroups.value = g || []
     topUsers.value = u || []
+    topDomains.value = d || []
   } catch {
     topGroups.value = []
     topUsers.value = []
+    topDomains.value = []
   }
 }
 
@@ -176,6 +180,23 @@ const actionOption = computed(() => ({
               { name: 'direct', value: 0 },
               { name: 'reject', value: 0 },
             ],
+    },
+  ],
+}))
+
+// Top 目标域名横向柱状图：y 轴为域名类目（inverse 让 Top1 在顶），x 轴为命中次数。
+// 绑定后端 domain 返回的 .count（非 group/user 的 .bytes）。
+const topDomainOption = computed(() => ({
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  grid: { left: 8, right: 24, top: 10, bottom: 10, containLabel: true },
+  xAxis: { type: 'value' },
+  yAxis: { type: 'category', inverse: true, data: topDomains.value.map((d) => d.name) },
+  series: [
+    {
+      type: 'bar',
+      data: topDomains.value.map((d) => d.count),
+      barMaxWidth: 18,
+      itemStyle: { borderRadius: [0, 4, 4, 0] },
     },
   ],
 }))
@@ -280,10 +301,10 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex-between">
               <span>Top 目标域名</span>
-              <el-tag size="small" type="info" effect="plain">首版暂不支持</el-tag>
             </div>
           </template>
-          <el-empty description="需目标域名埋点，后续提供" :image-size="60" />
+          <EChart v-if="topDomains.length" :option="topDomainOption" height="240px" />
+          <el-empty v-else description="暂无数据" :image-size="60" />
         </el-card>
       </el-col>
     </el-row>

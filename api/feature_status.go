@@ -25,9 +25,9 @@ const (
 // featureStatusTable 是权威功能状态表（单一真源）。
 // key 为前端约定的功能标识；value 为当前实现状态。
 var featureStatusTable = map[string]featureState{
-	// Top 域名排行：依赖 CONNECT 目标域名按连接维度埋点（traffic_stat 仅 group/user 桶，
-	// 无 domain 维度），首版未实现。对应 handleTop 的 kind=domain 返回空数组占位。
-	"dashboard.top.domain": FeatureNotImplemented,
+	// Top 域名排行：已实现——domain_hit 分钟桶 + stats.IncDomain 埋点（dialAndRelay/handleSniff）
+	// + handleTop kind=domain 查询，仪表盘与分组均接入。
+	"dashboard.top.domain": FeatureImplemented,
 }
 
 // handleFeatureStatus 返回权威功能状态表（T6.3，路由 GET /feature-status）。

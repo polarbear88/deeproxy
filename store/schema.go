@@ -231,6 +231,20 @@ var schemaStmts = []string{
 	);`,
 	// 按时间的辅助索引：清理过期行与时间窗口聚合查询（仪表盘 1h/24h/7d）走它。
 	`CREATE INDEX IF NOT EXISTS idx_stat_bucket ON traffic_stat(bucket_time);`,
+
+	// 目标域名命中聚合桶（Top 目标域名特性）：与 traffic_stat 同构的分钟桶模型。
+	//   - key = 完整主机名（含子域，www.x.com 与 mail.x.com 分开计数）；纯 IP 目标也作为 key 计入。
+	//   - group_id 维度支撑「全局 Top」(不过滤) 与「分组 Top」(group_id 过滤) 两种查询。
+	//   - (domain,group_id,bucket_time) 复合主键即唯一约束，支撑 upsert 累加与按保留期清理。
+	`CREATE TABLE IF NOT EXISTS domain_hit (
+		domain      TEXT    NOT NULL,
+		group_id    INTEGER NOT NULL,
+		bucket_time TEXT    NOT NULL,
+		hit_count   INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (domain, group_id, bucket_time)
+	);`,
+	// 按时间的辅助索引：保留期清理与时间窗口 Top 聚合查询走它（与 idx_stat_bucket 同理）。
+	`CREATE INDEX IF NOT EXISTS idx_domain_hit_bucket ON domain_hit(bucket_time);`,
 }
 
 // seedSystemSetting 确保系统设置单行存在（首次建库时插入默认行；已存在则忽略）。

@@ -458,7 +458,7 @@ func TestSettingsServerAddrAndProbePool(t *testing.T) {
 	}
 }
 
-// TestFeatureStatus 验证 T6.3 权威功能状态表端点返回 dashboard.top.domain=not-implemented。
+// TestFeatureStatus 验证 T6.3 权威功能状态表端点返回 dashboard.top.domain=implemented。
 func TestFeatureStatus(t *testing.T) {
 	app := testApp(t)
 	cookies := setupAndLogin(t, app)
@@ -469,8 +469,8 @@ func TestFeatureStatus(t *testing.T) {
 	}
 	var status map[string]string
 	mustUnmarshal(t, w.Body.Bytes(), &status)
-	if status["dashboard.top.domain"] != "not-implemented" {
-		t.Fatalf("dashboard.top.domain 应为 not-implemented，得到 %q", status["dashboard.top.domain"])
+	if status["dashboard.top.domain"] != "implemented" {
+		t.Fatalf("dashboard.top.domain 应为 implemented，得到 %q", status["dashboard.top.domain"])
 	}
 }
 
@@ -794,13 +794,13 @@ func TestWriteOpsProduceLogs(t *testing.T) {
 	}
 }
 
-// TestDashboardTop 验证 Top 排行：group/user 落地，domain 显式占位（X-Feature-Status）。
+// TestDashboardTop 验证 Top 排行：group/user/domain 均已落地（无流量时返回空数组，200，无占位头）。
 func TestDashboardTop(t *testing.T) {
 	app := testApp(t)
 	cookies := setupAndLogin(t, app)
 
-	// kind=group / kind=user：无流量时返回空数组(200，非 not-implemented)。
-	for _, kind := range []string{"group", "user"} {
+	// kind=group / kind=user / kind=domain：无流量时返回空数组(200，非 not-implemented)。
+	for _, kind := range []string{"group", "user", "domain"} {
 		w := doJSON(t, app, "GET", "/api/dashboard/top?kind="+kind, nil, cookies)
 		if w.Code != http.StatusOK {
 			t.Fatalf("top kind=%s 应 200, got %d %s", kind, w.Code, w.Body.String())
@@ -810,14 +810,16 @@ func TestDashboardTop(t *testing.T) {
 		}
 	}
 
-	// kind=domain：首版占位，应带 X-Feature-Status: not-implemented。
+	// kind=domain：已落地，返回 [{name,count}] 数组（空库下为空数组），且不带 X-Feature-Status。
 	w := doJSON(t, app, "GET", "/api/dashboard/top?kind=domain", nil, cookies)
 	if w.Code != http.StatusOK {
 		t.Fatalf("top kind=domain 应 200, got %d", w.Code)
 	}
-	if w.Header().Get("X-Feature-Status") != "not-implemented" {
-		t.Fatal("top kind=domain 应标 X-Feature-Status: not-implemented")
+	if w.Header().Get("X-Feature-Status") == "not-implemented" {
+		t.Fatal("top kind=domain 已落地，不应标 not-implemented")
 	}
+	var items []map[string]any
+	mustUnmarshal(t, w.Body.Bytes(), &items) // 断言 body 为 JSON 数组（空库下可为空数组）
 
 	// 非法 kind → 400。
 	w = doJSON(t, app, "GET", "/api/dashboard/top?kind=bogus", nil, cookies)

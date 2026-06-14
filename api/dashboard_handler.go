@@ -193,9 +193,8 @@ type topItem struct {
 
 // handleTop 返回 Top N 排行（kind=group|user|domain，AC-27）。
 //
-// 依赖现状：store 当前仅有 QueryTopGroups。user/domain 维度需 store 增查询 +
-// 目标域名埋点（属 T5/T6，见 api/CONTRACT.md 依赖缺口），首版返回空数组占位，
-// 前端正常渲染空排行，待埋点补齐后接入。
+// group/user 按 traffic_stat 总流量降序（topItem.bytes）；domain 按 domain_hit 命中次数
+// 降序（topItem.count）。domain 支持可选 ?groupId= 过滤（缺省=全局）。
 func (a *App) handleTop(c *gin.Context) {
 	kind := c.Query("kind")
 	limit := 10
@@ -243,12 +242,26 @@ func (a *App) handleTop(c *gin.Context) {
 		}
 		respondOK(c, out)
 	case "domain":
-		// 依赖缺口（首版未实现，team-lead 已确认记为已知后续项）：
-		//   - kind=domain 需对 CONNECT 目标域名【按连接维度】埋点；traffic_stat 是 group/user
-		//     分钟聚合桶、无 domain 维度，需另加 domain 计数表/内存 TopK（属 T5/T6 后续）。
-		// 保持数组契约 + 响应头显式标注"首版未实现"，前端据此显示"首版暂不支持"占位。
-		c.Header("X-Feature-Status", "not-implemented")
-		respondOK(c, []topItem{})
+		// kind=domain：已落地。按 domain_hit 分钟桶按命中次数降序返回 Top N。
+		// 可选 ?groupId=：缺省（<=0）表示全局合并所有分组；>0 仅统计该分组（镜像 handleTimeSeries）。
+		var groupID int64
+		if gid := c.Query("groupId"); gid != "" {
+			id, ok := parseQueryID(c, "groupId")
+			if !ok {
+				return
+			}
+			groupID = id
+		}
+		tops, err := a.store.QueryTopDomains(dayStart, end, limit, groupID)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "读取 Top 域名失败: "+err.Error())
+			return
+		}
+		out := make([]topItem, 0, len(tops))
+		for _, t := range tops {
+			out = append(out, topItem{Name: t.Domain, Count: t.HitCount})
+		}
+		respondOK(c, out)
 	default:
 		respondError(c, http.StatusBadRequest, "kind 非法（应为 group/user/domain）")
 	}
