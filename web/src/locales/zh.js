@@ -394,11 +394,10 @@ export default {
     // 表格列标题
     colTarget: '目标主机',
     colAction: '动作',
-    colDuration: '连接时长',
+    colDuration: '持续时长',
     colUpstream: '上游代理',
     colUserGroup: '用户 / 分组',
     colClient: '客户端来源',
-    colStartTs: '开始时间',
     // 截断提示：显示了 {shown} 条，共 {total} 条
     truncatedHint: '显示 {shown} / 共 {total} 条（已达上限，最新 500 条）',
     // 空表占位

@@ -395,7 +395,6 @@ export default {
     colUpstream: 'Upstream Proxy',
     colUserGroup: 'User / Group',
     colClient: 'Client',
-    colStartTs: 'Started At',
     // Truncation hint: showing {shown} of {total}
     truncatedHint: 'Showing {shown} of {total} (limit reached, newest 500)',
     // Empty table placeholder

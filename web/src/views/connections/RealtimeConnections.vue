@@ -6,7 +6,6 @@
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getActiveConnections } from '@/api/connections'
-import { formatTime } from '@/utils/format'
 
 const { t } = useI18n()
 
@@ -75,11 +74,6 @@ function formatDuration(sec) {
   const h = Math.floor(m / 60)
   const rm = m % 60
   return rm > 0 ? `${h}h ${rm}m` : `${h}h`
-}
-
-// start_ts 是 unix 秒；formatTime 接受毫秒，故乘以 1000。
-function formatStartTs(unixSec) {
-  return formatTime(Number(unixSec) * 1000)
 }
 
 // 动作 el-tag 颜色：forward 用默认蓝，direct 用绿色 success
@@ -199,13 +193,6 @@ function actionTagType(action) {
           min-width="140"
           show-overflow-tooltip
         />
-
-        <!-- 开始时间：unix 秒 → 本地时间字符串 -->
-        <el-table-column :label="t('connections.colStartTs')" width="160">
-          <template #default="{ row }">
-            {{ formatStartTs(row.start_ts) }}
-          </template>
-        </el-table-column>
       </el-table>
     </el-card>
   </div>

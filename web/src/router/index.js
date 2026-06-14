@@ -50,16 +50,16 @@ const routes = [
         meta: { title: 'menu.user', icon: 'User' },
       },
       {
-        path: 'syslog',
-        name: 'syslog',
-        component: () => import('@/views/syslog/SysLog.vue'),
-        meta: { title: 'menu.syslog', icon: 'Document' },
-      },
-      {
         path: 'connections',
         name: 'connections',
         component: () => import('@/views/connections/RealtimeConnections.vue'),
         meta: { title: 'menu.connections', icon: 'Histogram' },
+      },
+      {
+        path: 'syslog',
+        name: 'syslog',
+        component: () => import('@/views/syslog/SysLog.vue'),
+        meta: { title: 'menu.syslog', icon: 'Document' },
       },
       {
         path: 'system',
