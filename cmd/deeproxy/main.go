@@ -33,6 +33,7 @@ import (
 	"deeproxy/pool"
 	"deeproxy/pool/health"
 	"deeproxy/server"
+	"deeproxy/service"
 	"deeproxy/snapbuild"
 	"deeproxy/snapshot"
 	"deeproxy/stats"
@@ -67,12 +68,64 @@ func main() {
 	socks5Port := flag.Int("socks5", defaultSocks5Port, "SOCKS5 中继监听端口")
 	webPort := flag.Int("web", defaultWebPort, "Web 管理后台监听端口")
 	showVer := flag.Bool("v", false, "打印版本号并退出")
+	// 系统服务相关开关（组件⑥）：--daemon 把自身安装为系统服务并启动；
+	// --startup 仅与 --daemon 同用有效，表示设为开机自启。
+	daemon := flag.Bool("daemon", false, "安装为系统服务并启动（Linux=systemd / Windows=SCM；macOS 不支持）")
+	startup := flag.Bool("startup", false, "与 --daemon 同用：将服务设为开机自启")
+
+	// 自定义 --help / 用法输出：中英双语，覆盖全部参数（AC-6.9）。
+	// flag.Usage 由 flag.Parse() 在遇到 -h/--help 或解析错误时触发，早于 daemon 分支与平台分发，
+	// 故 --help 在所有平台（含 macOS）均可正常打印，只有 --daemon 才会触发「macOS 不支持」。
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, `deeproxy —— 跨平台 SOCKS5 中继转发工具 + Web 管理后台
+
+用法：
+  deeproxy [参数]
+
+参数：
+  --socks5 <端口>   SOCKS5 中继监听端口（默认 1768）
+  --web <端口>      Web 管理后台监听端口（默认 1769）
+  -v                打印版本号并退出
+  --daemon          安装为系统服务并启动（Linux=systemd / Windows=SCM；macOS 不支持）
+  --startup         与 --daemon 同用：将服务设为开机自启
+  --help            显示本帮助并退出
+
+示例：
+  deeproxy --socks5 1080 --web 8080
+  deeproxy --socks5 1080 --web 8080 --daemon --startup
+
+----------------------------------------------------------------------
+
+deeproxy — cross-platform SOCKS5 relay + Web admin panel
+
+Usage:
+  deeproxy [options]
+
+Options:
+  --socks5 <port>   SOCKS5 relay listen port (default 1768)
+  --web <port>      Web admin panel listen port (default 1769)
+  -v                Print version and exit
+  --daemon          Install as a system service and start it (Linux=systemd / Windows=SCM; macOS unsupported)
+  --startup         Use with --daemon: enable start-on-boot
+  --help            Show this help and exit
+
+Examples:
+  deeproxy --socks5 1080 --web 8080
+  deeproxy --socks5 1080 --web 8080 --daemon --startup`)
+	}
 	flag.Parse()
 
 	// -v：打印版本号即退出（供 CI 冒烟与运维排查）。
 	if *showVer {
 		fmt.Println("deeproxy", version)
 		return
+	}
+
+	// --daemon：安装为系统服务并启动（组件⑥，AC-6.7）。必须在打开 DB / 绑定端口之前处理，
+	// 完成后前台进程退出：绝不触碰 SQLite（避免 WAL 写争用）、不绑定端口（避免与后台服务进程冲突）。
+	if *daemon {
+		service.InstallAndStart(*startup) // 内部失败会自行 os.Exit(1)，成功则正常返回
+		os.Exit(0)
 	}
 
 	// ① 由固定 host + 端口参数组装监听地址（引导配置仅此三项）。

@@ -6,9 +6,12 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import * as sysApi from '@/api/system'
 import { useUserStore } from '@/stores/user'
 
+// i18n：组件④设置小卡片标题与字段标签经 t() 翻译
+const { t } = useI18n()
 const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
@@ -72,7 +75,7 @@ async function saveSettings() {
       sniffDomain: settings.sniffDomain,
       sniffTimeoutMs: settings.sniffTimeoutMs,
     })
-    ElMessage.success('已保存')
+    ElMessage.success(t('settings.saved'))
   } catch {
     /* ignore */
   }
@@ -81,13 +84,13 @@ async function saveSettings() {
 // ===== 管理员密码（校验旧密码；改密后清所有会话 → 跳登录）=====
 const pwdForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 async function changePassword() {
-  if (!pwdForm.oldPassword) return ElMessage.warning('请输入当前密码')
-  if (!pwdForm.newPassword) return ElMessage.warning('请输入新密码')
-  if (pwdForm.newPassword !== pwdForm.confirm) return ElMessage.warning('两次新密码不一致')
-  if (pwdForm.newPassword.length < 6) return ElMessage.warning('新密码至少 6 位')
+  if (!pwdForm.oldPassword) return ElMessage.warning(t('settings.pwdEnterCurrent'))
+  if (!pwdForm.newPassword) return ElMessage.warning(t('settings.pwdEnterNew'))
+  if (pwdForm.newPassword !== pwdForm.confirm) return ElMessage.warning(t('settings.pwdMismatch'))
+  if (pwdForm.newPassword.length < 6) return ElMessage.warning(t('settings.pwdTooShort'))
   try {
     await sysApi.changeAdminPassword({ oldPassword: pwdForm.oldPassword, newPassword: pwdForm.newPassword })
-    ElMessage.success('密码已修改，请重新登录')
+    ElMessage.success(t('settings.pwdChanged'))
     pwdForm.oldPassword = pwdForm.newPassword = pwdForm.confirm = ''
     userStore.clear()
     router.replace({ name: 'login' })
@@ -107,7 +110,7 @@ async function exportConfig() {
     a.download = `deeproxy-config-${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
-    ElMessage.success('已导出')
+    ElMessage.success(t('settings.exported'))
   } catch {
     /* ignore */
   }
@@ -121,9 +124,9 @@ function onImportFile(uploadFile) {
     try {
       parsed = JSON.parse(reader.result)
     } catch {
-      return ElMessage.error('文件不是合法 JSON')
+      return ElMessage.error(t('settings.importInvalidJson'))
     }
-    await ElMessageBox.confirm('导入将整体覆盖当前配置（后端导入前会自动备份），确认继续？', '提示', {
+    await ElMessageBox.confirm(t('settings.importConfirm'), t('common.notice'), {
       type: 'warning',
     }).catch(() => Promise.reject())
     importing.value = true
@@ -133,7 +136,7 @@ function onImportFile(uploadFile) {
         data: parsed.data ?? parsed,
         strategy: 'overwrite',
       })
-      ElMessage.success('导入成功')
+      ElMessage.success(t('settings.importSuccess'))
     } catch {
       /* ignore */
     } finally {
@@ -151,111 +154,142 @@ onMounted(loadSettings)
   <div class="dp-page">
     <el-row :gutter="16">
       <el-col :xs="24" :lg="12">
-        <el-card v-loading="loading" class="dp-card-gap">
-          <template #header><span>运行期与默认值设置</span></template>
-          <el-form label-width="130px">
-            <el-form-item label="管理员账号">
-              <el-input v-model="settings.adminUser" disabled />
-            </el-form-item>
+        <!-- 组件④：原单张「运行期与默认值设置」大卡拆为多张并排小卡（el-row :gutter + el-col :span=12 两列并排）。
+             字段与 saveSettings() 载荷一一对应，未删任何字段；script 不动，仅模板重组。 -->
+        <el-row v-loading="loading" :gutter="16">
+          <!-- 卡A：服务器与连接（管理员账号只读 + serverAddr + probePoolSize）-->
+          <el-col :span="12">
+            <el-card class="dp-card-gap">
+              <template #header><span>{{ t('settings.serverConn') }}</span></template>
+              <el-form label-width="130px">
+                <el-form-item :label="t('settings.adminAccount')">
+                  <el-input v-model="settings.adminUser" disabled />
+                </el-form-item>
+                <el-form-item :label="t('settings.serverAddr')">
+                  <el-input v-model="settings.serverAddr" :placeholder="t('settings.serverAddrPlaceholder')" />
+                  <span class="text-muted hint">{{ t('settings.serverAddrHint') }}</span>
+                </el-form-item>
+                <el-form-item :label="t('settings.probePoolSize')">
+                  <el-input-number v-model="settings.probePoolSize" :min="1" :max="10000" />
+                  <span class="text-muted hint">{{ t('settings.probePoolSizeHint') }}</span>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
 
-            <el-divider content-position="left">服务器与连接</el-divider>
-            <el-form-item label="服务器域名/IP">
-              <el-input v-model="settings.serverAddr" placeholder="如 proxy.example.com 或 1.2.3.4" style="width: 260px" />
-              <span class="text-muted hint">用于"复制代理地址"等连接提示；留空则用后端探测值</span>
-            </el-form-item>
-            <el-form-item label="健康检查协程池大小">
-              <el-input-number v-model="settings.probePoolSize" :min="1" :max="10000" />
-              <span class="text-muted hint">限制并发健康探测数（默认 150，可热调整）</span>
-            </el-form-item>
+          <!-- 卡B：运行期设置（defaultAction/logLevel/idleTimeoutSec/sniffDomain/sniffTimeoutMs）-->
+          <el-col :span="12">
+            <el-card class="dp-card-gap">
+              <template #header><span>{{ t('settings.runtime') }}</span></template>
+              <el-form label-width="130px">
+                <el-form-item :label="t('settings.defaultAction')">
+                  <el-select v-model="settings.defaultAction" style="width: 160px">
+                    <el-option :label="t('settings.actionForwardOpt')" value="forward" />
+                    <el-option :label="t('settings.actionDirectOpt')" value="direct" />
+                    <el-option :label="t('settings.actionRejectOpt')" value="reject" />
+                  </el-select>
+                  <span class="text-muted hint">{{ t('settings.defaultActionHint') }}</span>
+                </el-form-item>
+                <el-form-item :label="t('settings.logLevel')">
+                  <el-select v-model="settings.logLevel" style="width: 160px">
+                    <el-option label="debug" value="debug" />
+                    <el-option label="info" value="info" />
+                    <el-option label="warn" value="warn" />
+                    <el-option label="error" value="error" />
+                  </el-select>
+                  <span class="text-muted hint">{{ t('settings.logLevelHint') }}</span>
+                </el-form-item>
+                <el-form-item :label="t('settings.idleTimeout')">
+                  <el-input-number v-model="settings.idleTimeoutSec" :min="1" :max="86400" />
+                  <span class="text-muted hint">{{ t('settings.idleTimeoutHint') }}</span>
+                </el-form-item>
+                <el-form-item :label="t('settings.sniffDomain')">
+                  <el-switch v-model="settings.sniffDomain" />
+                  <span class="text-muted hint">{{ t('settings.sniffDomainHint') }}</span>
+                </el-form-item>
+                <el-form-item :label="t('settings.sniffTimeout')">
+                  <el-input-number v-model="settings.sniffTimeoutMs" :min="1" :max="60000" :step="50" />
+                  <span class="text-muted hint">{{ t('settings.sniffTimeoutHint') }}</span>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
 
-            <el-divider content-position="left">运行期设置</el-divider>
-            <el-form-item label="默认动作">
-              <el-select v-model="settings.defaultAction" style="width: 160px">
-                <el-option label="转发(forward)" value="forward" />
-                <el-option label="直连(direct)" value="direct" />
-                <el-option label="拒绝(reject)" value="reject" />
-              </el-select>
-              <span class="text-muted hint">规则全不命中时的兜底动作</span>
-            </el-form-item>
-            <el-form-item label="日志级别">
-              <el-select v-model="settings.logLevel" style="width: 160px">
-                <el-option label="debug" value="debug" />
-                <el-option label="info" value="info" />
-                <el-option label="warn" value="warn" />
-                <el-option label="error" value="error" />
-              </el-select>
-              <span class="text-muted hint">保存后立即热生效（无需重启）</span>
-            </el-form-item>
-            <el-form-item label="空闲超时(秒)">
-              <el-input-number v-model="settings.idleTimeoutSec" :min="1" :max="86400" />
-              <span class="text-muted hint">连接双向空闲回收（新连接生效，默认 300）</span>
-            </el-form-item>
-            <el-form-item label="域名嗅探">
-              <el-switch v-model="settings.sniffDomain" />
-              <span class="text-muted hint">IP 未命中 ip-cidr 时嗅探 SNI/Host 还原域名</span>
-            </el-form-item>
-            <el-form-item label="嗅探超时(毫秒)">
-              <el-input-number v-model="settings.sniffTimeoutMs" :min="1" :max="60000" :step="50" />
-              <span class="text-muted hint">嗅探首包等待上限（新连接生效，默认 300）</span>
-            </el-form-item>
+          <!-- 卡C：统计（statRetentionDays）-->
+          <el-col :span="12">
+            <el-card class="dp-card-gap">
+              <template #header><span>{{ t('settings.stat') }}</span></template>
+              <el-form label-width="130px">
+                <el-form-item :label="t('settings.statRetention')">
+                  <el-input-number v-model="settings.statRetentionDays" :min="1" :max="3650" />
+                  <span class="text-muted hint">{{ t('settings.statRetentionHint') }}</span>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
 
-            <el-divider content-position="left">统计</el-divider>
-            <el-form-item label="统计保留期(天)">
-              <el-input-number v-model="settings.statRetentionDays" :min="1" :max="3650" />
-              <span class="text-muted hint">过期聚合桶自动清理（默认 30）</span>
-            </el-form-item>
-            <el-divider content-position="left">健康检查默认值</el-divider>
-            <el-form-item label="探测方式">
-              <el-radio-group v-model="settings.hcDefaults.mode">
-                <el-radio value="ping">Ping</el-radio>
-                <el-radio value="url">请求 URL</el-radio>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item v-if="settings.hcDefaults.mode === 'url'" label="探测 URL">
-              <el-input v-model="settings.hcDefaults.url" />
-            </el-form-item>
-            <el-form-item label="间隔(秒)">
-              <el-input-number v-model="settings.hcDefaults.intervalSec" :min="10" :step="10" />
-            </el-form-item>
-            <el-form-item label="失败阈值">
-              <el-input-number v-model="settings.hcDefaults.failThreshold" :min="1" />
-            </el-form-item>
-            <el-form-item label="恢复阈值">
-              <el-input-number v-model="settings.hcDefaults.recoverThreshold" :min="1" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="saveSettings">保存设置</el-button>
-            </el-form-item>
-          </el-form>
-        </el-card>
+          <!-- 卡D：健康检查默认值（hcDefaults.*）-->
+          <el-col :span="12">
+            <el-card class="dp-card-gap">
+              <template #header><span>{{ t('settings.hcDefaults') }}</span></template>
+              <el-form label-width="130px">
+                <el-form-item :label="t('settings.hcMode')">
+                  <el-radio-group v-model="settings.hcDefaults.mode">
+                    <el-radio value="ping">{{ t('settings.hcModePing') }}</el-radio>
+                    <el-radio value="url">{{ t('settings.hcModeUrl') }}</el-radio>
+                  </el-radio-group>
+                </el-form-item>
+                <el-form-item v-if="settings.hcDefaults.mode === 'url'" :label="t('settings.hcUrl')">
+                  <el-input v-model="settings.hcDefaults.url" />
+                </el-form-item>
+                <el-form-item :label="t('settings.hcInterval')">
+                  <el-input-number v-model="settings.hcDefaults.intervalSec" :min="10" :step="10" />
+                </el-form-item>
+                <el-form-item :label="t('settings.hcFailThreshold')">
+                  <el-input-number v-model="settings.hcDefaults.failThreshold" :min="1" />
+                </el-form-item>
+                <el-form-item :label="t('settings.hcRecoverThreshold')">
+                  <el-input-number v-model="settings.hcDefaults.recoverThreshold" :min="1" />
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </el-col>
+
+          <!-- 保存按钮：放卡片组底部一处，仍调用同一 saveSettings()，载荷不变 -->
+          <el-col :span="24">
+            <el-card class="dp-card-gap">
+              <el-button type="primary" @click="saveSettings">{{ t('settings.saveSettings') }}</el-button>
+            </el-card>
+          </el-col>
+        </el-row>
       </el-col>
 
       <el-col :xs="24" :lg="12">
         <el-card class="dp-card-gap">
-          <template #header><span>修改管理员密码</span></template>
+          <template #header><span>{{ t('settings.adminPassword') }}</span></template>
           <el-form label-width="110px">
-            <el-form-item label="当前密码">
+            <el-form-item :label="t('settings.currentPassword')">
               <el-input v-model="pwdForm.oldPassword" type="password" show-password />
             </el-form-item>
-            <el-form-item label="新密码">
-              <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="至少 6 位" />
+            <el-form-item :label="t('settings.newPassword')">
+              <el-input v-model="pwdForm.newPassword" type="password" show-password :placeholder="t('settings.newPasswordPlaceholder')" />
             </el-form-item>
-            <el-form-item label="确认新密码">
+            <el-form-item :label="t('settings.confirmPassword')">
               <el-input v-model="pwdForm.confirm" type="password" show-password />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="changePassword">修改密码</el-button>
-              <span class="text-muted hint">改密后所有会话失效，需重新登录</span>
+              <el-button type="primary" @click="changePassword">{{ t('settings.changePasswordBtn') }}</el-button>
+              <span class="text-muted hint">{{ t('settings.pwdHint') }}</span>
             </el-form-item>
           </el-form>
         </el-card>
 
         <el-card>
-          <template #header><span>配置导入 / 导出</span></template>
+          <template #header><span>{{ t('settings.importExport') }}</span></template>
           <div class="ie-row">
-            <el-button :icon="'Download'" @click="exportConfig">导出配置 JSON</el-button>
+            <el-button :icon="'Download'" @click="exportConfig">{{ t('settings.exportConfig') }}</el-button>
             <el-upload :show-file-list="false" :before-upload="onImportFile" accept=".json">
-              <el-button :icon="'Upload'" :loading="importing">导入配置 JSON</el-button>
+              <el-button :icon="'Upload'" :loading="importing">{{ t('settings.importConfig') }}</el-button>
             </el-upload>
           </div>
           <el-alert
@@ -263,7 +297,7 @@ onMounted(loadSettings)
             type="info"
             :closable="false"
             show-icon
-            title="导出含分组/规则/用户/授权（带 schemaVersion）；导入为整体覆盖，后端导入前会自动备份。"
+            :title="t('settings.importExportTip')"
           />
         </el-card>
       </el-col>

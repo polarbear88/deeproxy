@@ -1,0 +1,379 @@
+// English translation resource.
+// MUST export the EXACT same key set as zh.js (G-2 parity gate) — when adding a
+// key, add it to BOTH files. Keys with hyphens (domain-suffix / ip-cidr) need quotes.
+// Internal enum values (forward/direct/reject, A/B, domain/domain-suffix/ip-cidr)
+// stay English in the data layer; only these display labels are translated.
+// {var} entries are vue-i18n named-interpolation placeholders. To show a LITERAL
+// brace (e.g. template {region}) escape it as {'{'}region{'}'} or it gets consumed.
+export default {
+  // Rule-engine actions; component ② builds key via t('action.' + row.action)
+  action: {
+    forward: 'Forward',
+    direct: 'Direct',
+    reject: 'Reject',
+  },
+  // Rule match type prefix; component ② builds key via t('matchType.' + type)
+  matchType: {
+    domain: 'Domain',
+    'domain-suffix': 'Domain Suffix',
+    'ip-cidr': 'IP CIDR',
+  },
+  // Proxy group type: key is the internal value A/B, value is the label without "Type A/B"
+  groupType: {
+    A: 'Dynamic Upstream',
+    B: 'Proxy Pool',
+  },
+  // Sidebar menu / page header titles; router meta.title stores keys here
+  menu: {
+    dashboard: 'Dashboard',
+    proxy: 'Proxy Groups',
+    rule: 'Rules',
+    user: 'Users',
+    syslog: 'System Log',
+    system: 'Settings',
+    login: 'Login',
+    setup: 'Initial Setup',
+  },
+  // Generic buttons / common text / shared ElMessage prompts (reused across pages, DRY)
+  common: {
+    save: 'Save',
+    cancel: 'Cancel',
+    edit: 'Edit',
+    delete: 'Delete',
+    confirm: 'Confirm',
+    add: 'Add',
+    create: 'Create',
+    close: 'Close',
+    refresh: 'Refresh',
+    reset: 'Reset',
+    test: 'Test',
+    search: 'Search',
+    actions: 'Actions',
+    enable: 'Enable',
+    disable: 'Disable',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    name: 'Name',
+    remark: 'Remark',
+    optionalRemark: 'Optional remark',
+    host: 'Host',
+    port: 'Port',
+    weight: 'Weight',
+    admin: 'Admin',
+    logout: 'Logout',
+    // Generic notice (for "Notice" titles etc.)
+    notice: 'Notice',
+    // Empty table placeholder
+    empty: 'No data',
+    // Generic success/failure ElMessage
+    saveSuccess: 'Saved',
+    deleteSuccess: 'Deleted',
+    // Delete confirm: {name} is object name; use deleteConfirmPlain without a name
+    deleteConfirm: 'Delete "{name}"?',
+    deleteConfirmPlain: 'Confirm delete?',
+    // Logout confirmation dialog text (MainLayout.vue ElMessageBox.confirm)
+    logoutConfirm: {
+      title: 'Notice',
+      message: 'Log out now?',
+      confirm: 'Log out',
+      cancel: 'Cancel',
+    },
+    // Theme toggle tooltip
+    switchLight: 'Switch to light',
+    switchDark: 'Switch to dark',
+    // Language switcher control
+    lang: 'Language',
+  },
+  // Component ⑤: dynamic upstream (Type A) traffic entry, etc.
+  group: {
+    traffic: 'Traffic',
+    pool: 'Proxy Pool',
+    // Traffic chart drawer title (group name appended)
+    trafficDrawerTitle: 'Group Traffic',
+  },
+  // Dashboard-specific text (components ②③ + existing page, full AC-2.5)
+  dashboard: {
+    noPoolGroup: 'No proxy pool groups yet',
+    connFormatTitle: 'Connection Username Format',
+    socks5Port: 'SOCKS5 Listen Port',
+    webPort: 'Web Admin Port',
+    connExample: 'Connection Example',
+    basicFormat: 'Basic Format',
+    basicFormatHint: 'First segment = user, second = proxy group.',
+    // Type A → without wording: dynamic upstream format note
+    upstreamFormatA: 'Dynamic Upstream',
+    // Type B → without wording: named variables format note
+    namedVarB: 'Named Variables',
+    namedVarBHint: "_ splits name/value, # splits variables; fills upstream template {'{'}region{'}'}/{'{'}session{'}'}.",
+    // Stat card titles
+    upRate: 'Upload Rate',
+    downRate: 'Download Rate',
+    activeConns: 'Active Connections',
+    todayTraffic: 'Today Traffic',
+    todayReq: 'Today Requests',
+    todayReject: 'Today Rejected',
+    // Today-rejected suffix: {rule} by-rule, {auth} by-auth
+    todayRejectSuffix: 'rule {rule}/auth {auth}',
+    // Chart area
+    trafficReqTs: 'Total Traffic / Requests Timeline',
+    actionDist: 'Action Distribution',
+    topGroups: 'Top Groups by Traffic',
+    topUsers: 'Top Users by Traffic',
+    topDomains: 'Top Target Domains',
+    // Timeline legend/axis
+    legendUp: 'Upload',
+    legendDown: 'Download',
+    legendReq: 'Requests',
+    axisTraffic: 'Traffic',
+    axisReq: 'Requests',
+    // Runtime health
+    runHealth: 'Runtime Health',
+    memMB: 'Process Memory',
+    uptime: 'Uptime',
+    healthyProxies: 'Healthy Proxy Overview',
+    // {healthy}/{total} available
+    healthyAvail: '{healthy} / {total} available',
+    // Connection example password placeholder (socks5://alice-default:<password>@...)
+    passwordPlaceholder: 'password',
+    // Connection note card footer tip
+    connTip: 'The SOCKS5 password must match the proxy user password, and the user must be authorized for the target group.',
+  },
+  // Component ④: Settings small-card titles + field labels (full AC-2.5)
+  settings: {
+    // Card titles
+    serverConn: 'Server & Connection',
+    runtime: 'Runtime',
+    stat: 'Statistics',
+    hcDefaults: 'Health Check Defaults',
+    adminPassword: 'Change Admin Password',
+    importExport: 'Config Import / Export',
+    // Fields
+    adminAccount: 'Admin Account',
+    serverAddr: 'Server Domain/IP',
+    serverAddrPlaceholder: 'e.g. proxy.example.com or 1.2.3.4',
+    serverAddrHint: 'Used for "copy proxy address" hints; leave empty to use backend-detected value',
+    probePoolSize: 'Health Check Pool Size',
+    probePoolSizeHint: 'Limits concurrent health probes (default 150, hot-adjustable)',
+    defaultAction: 'Default Action',
+    defaultActionHint: 'Fallback action when no rule matches',
+    // Default-action dropdown labels (with English value hint); value stays forward/direct/reject
+    actionForwardOpt: 'Forward (forward)',
+    actionDirectOpt: 'Direct (direct)',
+    actionRejectOpt: 'Reject (reject)',
+    logLevel: 'Log Level',
+    logLevelHint: 'Takes effect immediately after save (no restart)',
+    idleTimeout: 'Idle Timeout (s)',
+    idleTimeoutHint: 'Bidirectional idle reclaim (applies to new connections, default 300)',
+    sniffDomain: 'Domain Sniffing',
+    sniffDomainHint: 'Sniff SNI/Host to recover domain when IP misses ip-cidr',
+    sniffTimeout: 'Sniff Timeout (ms)',
+    sniffTimeoutHint: 'Max wait for first packet (applies to new connections, default 300)',
+    statRetention: 'Stat Retention (days)',
+    statRetentionHint: 'Expired aggregation buckets auto-cleaned (default 30)',
+    hcMode: 'Probe Mode',
+    hcModePing: 'Ping',
+    hcModeUrl: 'Request URL',
+    hcUrl: 'Probe URL',
+    hcInterval: 'Interval (s)',
+    hcFailThreshold: 'Fail Threshold',
+    hcRecoverThreshold: 'Recover Threshold',
+    saveSettings: 'Save Settings',
+    saved: 'Saved',
+    // Password change form
+    currentPassword: 'Current Password',
+    newPassword: 'New Password',
+    confirmPassword: 'Confirm New Password',
+    // New-password input placeholder (distinct from the change button)
+    newPasswordPlaceholder: 'At least 6 characters',
+    // Change-password submit button (distinct from adminPassword card title — do not merge)
+    changePasswordBtn: 'Change Password',
+    pwdHint: 'All sessions are invalidated after the change; re-login required',
+    pwdEnterCurrent: 'Please enter current password',
+    pwdEnterNew: 'Please enter new password',
+    pwdMismatch: 'New passwords do not match',
+    pwdTooShort: 'New password must be at least 6 characters',
+    pwdChanged: 'Password changed, please log in again',
+    // Import/export
+    exportConfig: 'Export Config JSON',
+    importConfig: 'Import Config JSON',
+    importExportTip: 'Export includes groups/rules/users/authorizations (with schemaVersion); import overwrites entirely, backend auto-backs-up before import.',
+    exported: 'Exported',
+    importInvalidJson: 'File is not valid JSON',
+    importConfirm: 'Import will overwrite the current config entirely (backend auto-backs-up first). Continue?',
+    importSuccess: 'Import succeeded',
+  },
+  // Component ⑦: input validation error text
+  validate: {
+    alnum: 'Only letters and digits allowed',
+    required: 'This field is required',
+  },
+  // Rules page text (component ②, full AC-2.5)
+  rules: {
+    title: 'Rules',
+    // Rule group table
+    emptyRuleGroups: 'No rule groups yet',
+    rgName: 'Rule Group Name',
+    scope: 'Scope',
+    scopeGlobal: 'Global (priority)',
+    scopeGroup: 'Group',
+    scopeGlobalShort: 'Global',
+    applyGroups: 'Applied Groups',
+    allGroups: 'All groups',
+    notApplied: 'Not applied',
+    ruleCount: 'Rules',
+    // Rule group buttons
+    btnRules: 'Rules',
+    // Rule group dialog
+    editRuleGroup: 'Edit Rule Group',
+    createRuleGroup: 'New Rule Group',
+    selectGroups: 'Select groups',
+    rgNameRequired: 'Please enter a rule group name',
+    // Delete rule group confirm: {name}
+    deleteRgConfirm: 'Delete rule group "{name}"?',
+    // Rule drawer
+    drawerTitle: 'Rules - {name}',
+    orderHint: 'First match by order within a group; global groups take priority over group-scoped ones.',
+    addRule: 'Add Rule',
+    emptyRules: 'No rules yet',
+    order: 'Order',
+    matchType: 'Match Type',
+    matchValue: 'Match Value',
+    matchValuePlaceholder: 'e.g. google.com or 192.168.0.0/16',
+    deleteRuleConfirm: 'Delete this rule?',
+    editRule: 'Edit Rule',
+    createRule: 'New Rule',
+    // Tester
+    tester: 'Rule Tester',
+    testTarget: 'Test Target',
+    testTargetPlaceholder: 'Domain or IP',
+    testGroup: 'Group',
+    testGroupPlaceholder: 'Select a group',
+    testResult: 'Test Result',
+    hitRule: 'Matched Rule',
+    noHit: 'No match (default action applies)',
+    source: 'Source',
+    enterTargetWarn: 'Please enter a domain or IP',
+    selectGroupWarn: 'Please select a group',
+    enterMatchValueWarn: 'Please enter a match value',
+  },
+  // Proxy groups page text (components ③⑤, full AC-2.5)
+  proxyGroups: {
+    title: 'Proxy Groups',
+    create: 'New Proxy Group',
+    emptyGroups: 'No proxy groups yet',
+    name: 'Name',
+    namePlaceholder: 'Group name',
+    remark: 'Remark',
+    type: 'Type',
+    todayTraffic: 'Today Traffic',
+    todayReq: 'Today Requests',
+    pool: 'Proxy Pool',
+    // Delete group confirm: {name}
+    deleteConfirm: 'Delete group "{name}"?',
+    // Group dialog
+    editGroup: 'Edit Proxy Group',
+    createGroup: 'New Proxy Group',
+    healthCheck: 'Health Check',
+    hcEnable: 'Enable',
+    hcMode: 'Probe Mode',
+    hcModeUrl: 'Request URL',
+    hcUrl: 'Probe URL',
+    hcInterval: 'Interval (s)',
+    hcFailThreshold: 'Fail Threshold',
+    hcFailHint: 'Mark unavailable after N consecutive failures',
+    hcRecoverThreshold: 'Recover Threshold',
+    hcRecoverHint: 'Recover after N consecutive successes',
+    // Upstream pool drawer (Type B)
+    poolDrawerTitle: 'Proxy Pool - {name}',
+    poolTemplateHint: "Named-variable template: write placeholders like {'{'}region{'}'} in the username; client tail segment fills by name.",
+    addUpstream: 'Add Upstream',
+    searchPlaceholder: 'Search by host/username',
+    healthStatePlaceholder: 'Health state',
+    stateHealthy: 'Healthy',
+    stateUnhealthy: 'Unhealthy',
+    stateUnknown: 'Unknown',
+    selectAllByFilter: 'Select all across pages by current filter',
+    bulkSetWeight: 'Bulk Set Weight',
+    bulkEnable: 'Bulk Enable',
+    bulkDisable: 'Bulk Disable',
+    emptyUpstreams: 'No upstream proxies yet',
+    address: 'Address',
+    usernameTemplate: 'Username Template',
+    health: 'Health',
+    latency: 'Latency',
+    // Traffic chart drawer
+    groupTraffic24h: 'Group Traffic (24h)',
+    topDomains: 'Top Target Domains',
+    legendUp: 'Upload',
+    legendDown: 'Download',
+    // Upstream edit/add
+    editUpstream: 'Edit Upstream',
+    upstreamHostPlaceholder: 'Domain or IP',
+    usernameTplPlaceholder: "e.g. acct-{'{'}region{'}'}-{'{'}session{'}'}",
+    upstreamPwd: 'Upstream Password',
+    upstreamPwdPlaceholder: 'Upstream SOCKS5 password',
+    tabSingle: 'Single Add',
+    tabBatch: 'Batch Add',
+    batchHint: 'One per line, supports {fmt1} or {fmt2}; for IPv6 use',
+    submitBatch: 'Submit Batch',
+    // ElMessage prompts
+    enterHostWarn: 'Please enter upstream host',
+    pasteUpstreamWarn: 'Please paste at least one upstream line',
+    addOkCount: 'Added {ok} upstream(s)',
+    addPartial: '{ok} succeeded, {failed} failed',
+    deleteUpstreamConfirm: 'Delete this upstream?',
+    selectUpstreamWarn: 'Please select upstream(s) first',
+    bulkAffected: '{msg} ({n} affected)',
+    bulkWeightDone: 'Weights updated in bulk',
+    bulkEnableDone: 'Enabled in bulk',
+    bulkDisableDone: 'Disabled in bulk',
+    setWeightPrompt: 'Set a uniform weight for selected upstreams',
+    setWeightTitle: 'Bulk Set Weight',
+    positiveIntError: 'Please enter a positive integer',
+    selectAllByFilterMsg: 'All selected by current filter ({total} total)',
+    selectedCount: '{n} selected',
+    testOk: 'Reachable, latency {ms}ms',
+    testFail: 'Unreachable: {err}',
+    unknownError: 'Unknown error',
+    // Failed line echo: line {line}: {reason}
+    failedLine: 'Line {line}: {reason}',
+    failedSummary: '{ok} succeeded, {failed} failed',
+  },
+  // Users page text (component ⑦, full AC-2.5)
+  users: {
+    title: 'Users (Proxy Users)',
+    create: 'New User',
+    emptyUsers: 'No proxy users yet',
+    username: 'Username',
+    usernamePlaceholder: 'Proxy username',
+    authedGroups: 'Authorized Groups',
+    allGroups: 'All proxy groups',
+    notAuthed: 'Not authorized',
+    setAuth: 'Set Authorized Groups',
+    copyProxyAddr: 'Copy Proxy Address',
+    // Edit/create dialog
+    editUser: 'Edit User',
+    createUser: 'New User',
+    resetPassword: 'Reset Password',
+    password: 'Password',
+    pwdEditPlaceholder: 'Leave empty to keep unchanged',
+    pwdCreatePlaceholder: 'Set a password',
+    setPasswordWarn: 'Please set a password',
+    remark: 'Remark',
+    optionalRemark: 'Optional remark',
+    // Delete user confirm: {name}
+    deleteConfirm: 'Delete user "{name}"?',
+    // Authorization dialog
+    authDialogTitle: 'Set Authorized Groups - {name}',
+    authAllGroups: 'Authorize All Proxy Groups',
+    authAllHint: 'When on, this user can access all proxy groups (per-group authorization below is kept)',
+    authPerGroup: 'Per-group Authorization',
+    selectAccessibleGroups: 'Select accessible groups',
+    saveAuth: 'Save Authorization',
+    authSaved: 'Authorization saved',
+    // Copy proxy address
+    copied: 'Proxy address copied',
+    copyFailed: 'Copy failed, please copy manually',
+    pwdPlaceholder: 'password',
+  },
+}

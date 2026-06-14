@@ -5,16 +5,29 @@
 // - Type A 隐藏代理池与健康检查 UI（G2）。
 import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import EChart from '@/components/EChart.js'
 import * as groupApi from '@/api/group'
 import * as dashApi from '@/api/dashboard'
 import { formatBytes, formatNumber } from '@/utils/format'
+
+// i18n：组件③类型改名、组件⑤「流量」按钮、组件⑦校验文案均经 t() 翻译
+const { t } = useI18n()
 
 const loading = ref(false)
 const groups = ref([])
 
 // ===== 组编辑对话框 =====
 const groupDialog = reactive({ visible: false, isEdit: false, form: null })
+// 组件⑦：分组名输入校验。仅 ^[A-Za-z0-9]+$（与后端 ValidIdentifier 同规则），
+// 编辑态名字仍可改，故新建/编辑都会触发该校验。
+const groupFormRef = ref(null)
+const groupRules = {
+  name: [
+    { required: true, message: t('validate.required'), trigger: 'blur' },
+    { pattern: /^[A-Za-z0-9]+$/, message: t('validate.alnum'), trigger: 'blur' },
+  ],
+}
 function emptyGroupForm() {
   return {
     id: null,
@@ -43,11 +56,13 @@ function openEditGroup(row) {
 }
 async function saveGroup() {
   const f = groupDialog.form
-  if (!f.name) return ElMessage.warning('请输入分组名称')
+  // 组件⑦：提交前先跑表单校验（必填 + ^[A-Za-z0-9]+$），不通过则中止
+  const ok = await groupFormRef.value?.validate().catch(() => false)
+  if (!ok) return
   try {
     if (groupDialog.isEdit) await groupApi.updateGroup(f.id, f)
     else await groupApi.createGroup(f)
-    ElMessage.success('保存成功')
+    ElMessage.success(t('common.saveSuccess'))
     groupDialog.visible = false
     loadGroups()
   } catch {
@@ -55,10 +70,10 @@ async function saveGroup() {
   }
 }
 async function removeGroup(row) {
-  await ElMessageBox.confirm(`确认删除分组「${row.name}」？`, '提示', { type: 'warning' }).catch(() => 'cancel')
+  await ElMessageBox.confirm(t('proxyGroups.deleteConfirm', { name: row.name }), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
   try {
     await groupApi.deleteGroup(row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleteSuccess'))
     loadGroups()
   } catch {
     /* ignore */
@@ -141,8 +156,8 @@ function onSelectionChange(rows) {
 // 是否有可执行批量操作的选择（当前页勾选 或 跨页全选）。
 const hasBulkSelection = computed(() => selectAllByFilter.value || selectedRows.value.length > 0)
 const bulkSelectionLabel = computed(() => {
-  if (selectAllByFilter.value) return `已按当前筛选全选（共 ${upstreamDrawer.total} 条）`
-  if (selectedRows.value.length) return `已选 ${selectedRows.value.length} 条`
+  if (selectAllByFilter.value) return t('proxyGroups.selectAllByFilterMsg', { total: upstreamDrawer.total })
+  if (selectedRows.value.length) return t('proxyGroups.selectedCount', { n: selectedRows.value.length })
   return ''
 })
 
@@ -169,11 +184,11 @@ function openEditUpstream(row) {
 async function saveUpstream() {
   const f = upDialog.form
   const gid = upstreamDrawer.group.id
-  if (!f.host) return ElMessage.warning('请输入上游主机')
+  if (!f.host) return ElMessage.warning(t('proxyGroups.enterHostWarn'))
   try {
     if (upDialog.isEdit) await groupApi.updateUpstream(gid, f.id, f)
     else await groupApi.createUpstream(gid, f)
-    ElMessage.success('保存成功')
+    ElMessage.success(t('common.saveSuccess'))
     upDialog.visible = false
     loadUpstreams()
   } catch {
@@ -189,17 +204,17 @@ async function submitBatchAdd() {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
-  if (lines.length === 0) return ElMessage.warning('请粘贴至少一行上游')
+  if (lines.length === 0) return ElMessage.warning(t('proxyGroups.pasteUpstreamWarn'))
   upDialog.submitting = true
   upDialog.result = null
   try {
     const r = await groupApi.batchAddUpstreams(gid, lines)
     upDialog.result = { ok: r?.ok ?? 0, failed: r?.failed || [] }
     if (upDialog.result.failed.length === 0) {
-      ElMessage.success(`成功添加 ${upDialog.result.ok} 条`)
+      ElMessage.success(t('proxyGroups.addOkCount', { ok: upDialog.result.ok }))
       upDialog.visible = false
     } else {
-      ElMessage.warning(`成功 ${upDialog.result.ok} 条，失败 ${upDialog.result.failed.length} 条`)
+      ElMessage.warning(t('proxyGroups.addPartial', { ok: upDialog.result.ok, failed: upDialog.result.failed.length }))
     }
     loadUpstreams()
   } catch {
@@ -210,10 +225,10 @@ async function submitBatchAdd() {
 }
 async function removeUpstream(row) {
   const gid = upstreamDrawer.group.id
-  await ElMessageBox.confirm('确认删除该上游？', '提示', { type: 'warning' }).catch(() => 'cancel')
+  await ElMessageBox.confirm(t('proxyGroups.deleteUpstreamConfirm'), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
   try {
     await groupApi.deleteUpstream(gid, row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleteSuccess'))
     loadUpstreams()
   } catch {
     /* ignore */
@@ -222,7 +237,7 @@ async function removeUpstream(row) {
 async function toggleUpstream(row) {
   try {
     await groupApi.toggleUpstream(upstreamDrawer.group.id, row.id, row.enabled)
-    ElMessage.success(row.enabled ? '已启用' : '已禁用')
+    ElMessage.success(row.enabled ? t('common.enabled') : t('common.disabled'))
   } catch {
     row.enabled = !row.enabled
   }
@@ -243,7 +258,7 @@ function buildSelectionPayload() {
 }
 // field: 'weight'|'enabled'；value: 对应新值。后端按 field 决定写哪个列。
 async function bulkApply(field, value, successMsg) {
-  if (!hasBulkSelection.value) return ElMessage.warning('请先选择上游')
+  if (!hasBulkSelection.value) return ElMessage.warning(t('proxyGroups.selectUpstreamWarn'))
   const gid = upstreamDrawer.group.id
   try {
     const r = await groupApi.bulkUpdateUpstreams(gid, {
@@ -251,7 +266,7 @@ async function bulkApply(field, value, successMsg) {
       field,
       [field]: value,
     })
-    ElMessage.success(`${successMsg}（影响 ${r?.affected ?? 0} 条）`)
+    ElMessage.success(t('proxyGroups.bulkAffected', { msg: successMsg, n: r?.affected ?? 0 }))
     selectAllByFilter.value = false
     selectedRows.value = []
     upTableRef.value?.clearSelection?.()
@@ -261,27 +276,27 @@ async function bulkApply(field, value, successMsg) {
   }
 }
 async function bulkSetWeight() {
-  const { value } = await ElMessageBox.prompt('为选中上游设置统一权重', '批量设置权重', {
+  const { value } = await ElMessageBox.prompt(t('proxyGroups.setWeightPrompt'), t('proxyGroups.setWeightTitle'), {
     inputPattern: /^[1-9]\d*$/,
-    inputErrorMessage: '请输入正整数',
+    inputErrorMessage: t('proxyGroups.positiveIntError'),
     inputValue: '1',
   }).catch(() => ({ value: null }))
   if (value == null) return
-  bulkApply('weight', Number(value), '已批量设置权重')
+  bulkApply('weight', Number(value), t('proxyGroups.bulkWeightDone'))
 }
 function bulkEnable() {
-  bulkApply('enabled', true, '已批量启用')
+  bulkApply('enabled', true, t('proxyGroups.bulkEnableDone'))
 }
 function bulkDisable() {
-  bulkApply('enabled', false, '已批量禁用')
+  bulkApply('enabled', false, t('proxyGroups.bulkDisableDone'))
 }
 const testing = ref({})
 async function testUpstream(row) {
   testing.value[row.id] = true
   try {
     const r = await groupApi.testUpstream(upstreamDrawer.group.id, row.id)
-    if (r?.ok) ElMessage.success(`连通，延迟 ${r.latencyMs}ms`)
-    else ElMessage.error(`不通：${r?.error || '未知错误'}`)
+    if (r?.ok) ElMessage.success(t('proxyGroups.testOk', { ms: r.latencyMs }))
+    else ElMessage.error(t('proxyGroups.testFail', { err: r?.error || t('proxyGroups.unknownError') }))
   } catch {
     /* ignore */
   } finally {
@@ -292,6 +307,14 @@ async function testUpstream(row) {
 // ===== 分组独立流量图 =====
 const groupTs = ref({ times: [], up: [], down: [] })
 const groupTopDomains = ref([])
+// 组件⑤：Type A 动态上游流量图表抽屉（仅含图表，不含上游池表格）。
+// 独立于 upstreamDrawer，复用 loadGroupChart / groupChartOption / groupTopDomainOption。
+const chartDrawer = reactive({ visible: false, group: null })
+function openGroupChart(g) {
+  chartDrawer.group = g
+  chartDrawer.visible = true
+  loadGroupChart(g.id)
+}
 async function loadGroupChart(groupId) {
   try {
     const d = await dashApi.getTimeseries({ window: '24h', groupId })
@@ -308,13 +331,13 @@ async function loadGroupChart(groupId) {
 }
 const groupChartOption = computed(() => ({
   tooltip: { trigger: 'axis' },
-  legend: { data: ['上行', '下行'] },
+  legend: { data: [t('proxyGroups.legendUp'), t('proxyGroups.legendDown')] },
   grid: { left: 50, right: 20, top: 30, bottom: 30 },
   xAxis: { type: 'category', boundaryGap: false, data: groupTs.value.times },
   yAxis: { type: 'value', axisLabel: { formatter: (v) => formatBytes(v) } },
   series: [
-    { name: '上行', type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.up },
-    { name: '下行', type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.down },
+    { name: t('proxyGroups.legendUp'), type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.up },
+    { name: t('proxyGroups.legendDown'), type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: groupTs.value.down },
   ],
 }))
 
@@ -348,101 +371,102 @@ onMounted(loadGroups)
     <el-card>
       <template #header>
         <div class="flex-between">
-          <span>代理组管理</span>
-          <el-button type="primary" :icon="'Plus'" @click="openCreateGroup">新建代理组</el-button>
+          <span>{{ t('proxyGroups.title') }}</span>
+          <el-button type="primary" :icon="'Plus'" @click="openCreateGroup">{{ t('proxyGroups.create') }}</el-button>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="groups" border empty-text="暂无代理组">
-        <el-table-column prop="name" label="名称" min-width="140" />
-        <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
-        <el-table-column label="类型" width="150">
+      <el-table v-loading="loading" :data="groups" border :empty-text="t('proxyGroups.emptyGroups')">
+        <el-table-column prop="name" :label="t('proxyGroups.name')" min-width="140" />
+        <el-table-column prop="remark" :label="t('proxyGroups.remark')" min-width="160" show-overflow-tooltip />
+        <el-table-column :label="t('proxyGroups.type')" width="150">
           <template #default="{ row }">
             <el-tag :type="row.type === 'A' ? 'warning' : 'success'" effect="plain">
-              {{ row.type === 'A' ? 'Type A 动态上游' : 'Type B 代理池' }}
+              {{ t('groupType.' + row.type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="今日流量" width="130">
+        <el-table-column :label="t('proxyGroups.todayTraffic')" width="130">
           <template #default="{ row }">{{ formatBytes((row.todayUp || 0) + (row.todayDown || 0)) }}</template>
         </el-table-column>
-        <el-table-column label="今日请求" width="110">
+        <el-table-column :label="t('proxyGroups.todayReq')" width="110">
           <template #default="{ row }">{{ formatNumber(row.todayReq || 0) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column :label="t('common.actions')" width="240" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.type === 'B'" link type="primary" @click="openUpstreams(row)">代理池</el-button>
-            <el-button link type="primary" @click="openEditGroup(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeGroup(row)">删除</el-button>
+            <el-button v-if="row.type === 'B'" link type="primary" @click="openUpstreams(row)">{{ t('proxyGroups.pool') }}</el-button>
+            <el-button v-if="row.type === 'A'" link type="primary" @click="openGroupChart(row)">{{ t('group.traffic') }}</el-button>
+            <el-button link type="primary" @click="openEditGroup(row)">{{ t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="removeGroup(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
     <!-- 组编辑对话框 -->
-    <el-dialog v-model="groupDialog.visible" :title="groupDialog.isEdit ? '编辑代理组' : '新建代理组'" width="560px">
-      <el-form v-if="groupDialog.form" :model="groupDialog.form" label-width="110px">
-        <el-form-item label="名称" required>
-          <el-input v-model="groupDialog.form.name" placeholder="分组名称" />
+    <el-dialog v-model="groupDialog.visible" :title="groupDialog.isEdit ? t('proxyGroups.editGroup') : t('proxyGroups.createGroup')" width="560px">
+      <el-form v-if="groupDialog.form" ref="groupFormRef" :model="groupDialog.form" :rules="groupRules" label-width="110px">
+        <el-form-item :label="t('proxyGroups.name')" prop="name">
+          <el-input v-model="groupDialog.form.name" :placeholder="t('proxyGroups.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="groupDialog.form.remark" placeholder="可选备注" />
+        <el-form-item :label="t('proxyGroups.remark')">
+          <el-input v-model="groupDialog.form.remark" :placeholder="t('proxyGroups.optionalRemark')" />
         </el-form-item>
-        <el-form-item label="类型">
+        <el-form-item :label="t('proxyGroups.type')">
           <el-radio-group v-model="groupDialog.form.type" :disabled="groupDialog.isEdit">
-            <el-radio value="A">Type A 动态上游</el-radio>
-            <el-radio value="B">Type B 代理池</el-radio>
+            <el-radio value="A">{{ t('groupType.A') }}</el-radio>
+            <el-radio value="B">{{ t('groupType.B') }}</el-radio>
           </el-radio-group>
         </el-form-item>
 
         <!-- G2：仅 Type B 显示健康检查配置 -->
         <template v-if="groupDialog.form.type === 'B'">
-          <el-divider content-position="left">健康检查</el-divider>
-          <el-form-item label="启用">
+          <el-divider content-position="left">{{ t('proxyGroups.healthCheck') }}</el-divider>
+          <el-form-item :label="t('proxyGroups.hcEnable')">
             <el-switch v-model="groupDialog.form.healthCheck.enabled" />
           </el-form-item>
           <template v-if="groupDialog.form.healthCheck.enabled">
-            <el-form-item label="探测方式">
+            <el-form-item :label="t('proxyGroups.hcMode')">
               <el-radio-group v-model="groupDialog.form.healthCheck.mode">
-                <el-radio value="ping">Ping</el-radio>
-                <el-radio value="url">请求 URL</el-radio>
+                <el-radio value="ping">{{ t('settings.hcModePing') }}</el-radio>
+                <el-radio value="url">{{ t('proxyGroups.hcModeUrl') }}</el-radio>
               </el-radio-group>
             </el-form-item>
-            <el-form-item v-if="groupDialog.form.healthCheck.mode === 'url'" label="探测 URL">
+            <el-form-item v-if="groupDialog.form.healthCheck.mode === 'url'" :label="t('proxyGroups.hcUrl')">
               <el-input v-model="groupDialog.form.healthCheck.url" />
             </el-form-item>
-            <el-form-item label="间隔(秒)">
+            <el-form-item :label="t('proxyGroups.hcInterval')">
               <el-input-number v-model="groupDialog.form.healthCheck.intervalSec" :min="10" :step="10" />
             </el-form-item>
-            <el-form-item label="失败阈值">
+            <el-form-item :label="t('proxyGroups.hcFailThreshold')">
               <el-input-number v-model="groupDialog.form.healthCheck.failThreshold" :min="1" />
-              <span class="text-muted form-hint">连续失败次数标记不可用</span>
+              <span class="text-muted form-hint">{{ t('proxyGroups.hcFailHint') }}</span>
             </el-form-item>
-            <el-form-item label="恢复阈值">
+            <el-form-item :label="t('proxyGroups.hcRecoverThreshold')">
               <el-input-number v-model="groupDialog.form.healthCheck.recoverThreshold" :min="1" />
-              <span class="text-muted form-hint">连续成功次数恢复</span>
+              <span class="text-muted form-hint">{{ t('proxyGroups.hcRecoverHint') }}</span>
             </el-form-item>
           </template>
         </template>
       </el-form>
       <template #footer>
-        <el-button @click="groupDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="saveGroup">保存</el-button>
+        <el-button @click="groupDialog.visible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveGroup">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 上游代理抽屉（仅 Type B）-->
-    <el-drawer v-model="upstreamDrawer.visible" :title="`代理池 - ${upstreamDrawer.group?.name || ''}`" size="60%">
+    <el-drawer v-model="upstreamDrawer.visible" :title="t('proxyGroups.poolDrawerTitle', { name: upstreamDrawer.group?.name || '' })" size="60%">
       <div class="drawer-toolbar">
-        <span class="text-muted">命名变量模板：用户名里写 <code>{region}</code> 等占位，客户端尾段按名替换。</span>
-        <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateUpstream">添加上游</el-button>
+        <span class="text-muted">{{ t('proxyGroups.poolTemplateHint') }}</span>
+        <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateUpstream">{{ t('proxyGroups.addUpstream') }}</el-button>
       </div>
 
       <!-- 筛选栏 -->
       <div class="filter-bar">
         <el-input
           v-model="upQuery.keyword"
-          placeholder="按主机/用户名搜索"
+          :placeholder="t('proxyGroups.searchPlaceholder')"
           size="small"
           clearable
           style="width: 220px"
@@ -451,17 +475,17 @@ onMounted(loadGroups)
         />
         <el-select
           v-model="upQuery.healthState"
-          placeholder="健康状态"
+          :placeholder="t('proxyGroups.healthStatePlaceholder')"
           size="small"
           clearable
           style="width: 130px"
           @change="onFilterChange"
         >
-          <el-option label="可用" value="healthy" />
-          <el-option label="不可用" value="unhealthy" />
-          <el-option label="未知" value="unknown" />
+          <el-option :label="t('proxyGroups.stateHealthy')" value="healthy" />
+          <el-option :label="t('proxyGroups.stateUnhealthy')" value="unhealthy" />
+          <el-option :label="t('proxyGroups.stateUnknown')" value="unknown" />
         </el-select>
-        <el-button size="small" @click="onFilterChange">搜索</el-button>
+        <el-button size="small" @click="onFilterChange">{{ t('common.search') }}</el-button>
       </div>
 
       <!-- 批量操作工具栏 -->
@@ -471,13 +495,13 @@ onMounted(loadGroups)
           :disabled="upstreamDrawer.total === 0"
           @change="selectedRows = []"
         >
-          按当前筛选跨页全选
+          {{ t('proxyGroups.selectAllByFilter') }}
         </el-checkbox>
         <span v-if="bulkSelectionLabel" class="text-muted bulk-count">{{ bulkSelectionLabel }}</span>
         <div class="bulk-actions">
-          <el-button size="small" :disabled="!hasBulkSelection" @click="bulkSetWeight">批量设权重</el-button>
-          <el-button size="small" type="success" :disabled="!hasBulkSelection" @click="bulkEnable">批量启用</el-button>
-          <el-button size="small" type="warning" :disabled="!hasBulkSelection" @click="bulkDisable">批量禁用</el-button>
+          <el-button size="small" :disabled="!hasBulkSelection" @click="bulkSetWeight">{{ t('proxyGroups.bulkSetWeight') }}</el-button>
+          <el-button size="small" type="success" :disabled="!hasBulkSelection" @click="bulkEnable">{{ t('proxyGroups.bulkEnable') }}</el-button>
+          <el-button size="small" type="warning" :disabled="!hasBulkSelection" @click="bulkDisable">{{ t('proxyGroups.bulkDisable') }}</el-button>
         </div>
       </div>
 
@@ -487,35 +511,35 @@ onMounted(loadGroups)
         :data="upstreamDrawer.list"
         border
         size="small"
-        empty-text="暂无上游代理"
+        :empty-text="t('proxyGroups.emptyUpstreams')"
         @selection-change="onSelectionChange"
       >
         <el-table-column type="selection" width="44" />
-        <el-table-column label="地址" min-width="160">
+        <el-table-column :label="t('proxyGroups.address')" min-width="160">
           <template #default="{ row }">{{ row.host }}:{{ row.port }}</template>
         </el-table-column>
-        <el-table-column prop="usernameTemplate" label="用户名模板" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="weight" label="权重" width="80" />
-        <el-table-column label="健康" width="100">
+        <el-table-column prop="usernameTemplate" :label="t('proxyGroups.usernameTemplate')" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="weight" :label="t('common.weight')" width="80" />
+        <el-table-column :label="t('proxyGroups.health')" width="100">
           <template #default="{ row }">
             <el-tag size="small" :type="healthTagType(row.healthState)" effect="plain">
-              {{ row.healthState === 'healthy' ? '可用' : row.healthState === 'unhealthy' ? '不可用' : '未知' }}
+              {{ row.healthState === 'healthy' ? t('proxyGroups.stateHealthy') : row.healthState === 'unhealthy' ? t('proxyGroups.stateUnhealthy') : t('proxyGroups.stateUnknown') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="延迟" width="90">
+        <el-table-column :label="t('proxyGroups.latency')" width="90">
           <template #default="{ row }">{{ row.latencyMs != null ? row.latencyMs + 'ms' : '-' }}</template>
         </el-table-column>
-        <el-table-column label="启用" width="80">
+        <el-table-column :label="t('common.enable')" width="80">
           <template #default="{ row }">
             <el-switch v-model="row.enabled" size="small" @change="toggleUpstream(row)" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column :label="t('common.actions')" width="190" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" :loading="testing[row.id]" @click="testUpstream(row)">测试</el-button>
-            <el-button link type="primary" @click="openEditUpstream(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeUpstream(row)">删除</el-button>
+            <el-button link type="primary" :loading="testing[row.id]" @click="testUpstream(row)">{{ t('common.test') }}</el-button>
+            <el-button link type="primary" @click="openEditUpstream(row)">{{ t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="removeUpstream(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -532,59 +556,73 @@ onMounted(loadGroups)
         />
       </div>
 
-      <el-divider content-position="left">分组流量（24h）</el-divider>
+      <el-divider content-position="left">{{ t('proxyGroups.groupTraffic24h') }}</el-divider>
       <EChart :option="groupChartOption" height="260px" />
 
-      <el-divider content-position="left">Top 目标域名</el-divider>
+      <el-divider content-position="left">{{ t('proxyGroups.topDomains') }}</el-divider>
       <EChart v-if="groupTopDomains.length" :option="groupTopDomainOption" height="260px" />
-      <el-empty v-else description="暂无数据" :image-size="50" />
+      <el-empty v-else :description="t('common.empty')" :image-size="50" />
+    </el-drawer>
+
+    <!-- 组件⑤：动态上游（Type A）流量图表抽屉。独立于上游池抽屉，仅含图表，无上游表格/分页/批量 -->
+    <el-drawer
+      v-model="chartDrawer.visible"
+      :title="`${t('group.trafficDrawerTitle')} - ${chartDrawer.group?.name || ''}`"
+      size="60%"
+    >
+      <el-divider content-position="left">{{ t('group.trafficDrawerTitle') }}（24h）</el-divider>
+      <EChart :option="groupChartOption" height="260px" />
+
+      <el-divider content-position="left">{{ t('proxyGroups.topDomains') }}</el-divider>
+      <EChart v-if="groupTopDomains.length" :option="groupTopDomainOption" height="260px" />
+      <el-empty v-else :description="t('common.empty')" :image-size="50" />
     </el-drawer>
 
     <!-- 上游编辑/添加对话框（添加时支持 单条 / 批量 两 tab）-->
-    <el-dialog v-model="upDialog.visible" :title="upDialog.isEdit ? '编辑上游' : '添加上游'" width="560px">
+    <el-dialog v-model="upDialog.visible" :title="upDialog.isEdit ? t('proxyGroups.editUpstream') : t('proxyGroups.addUpstream')" width="560px">
       <!-- 编辑模式：仅单条表单 -->
       <el-form v-if="upDialog.isEdit && upDialog.form" :model="upDialog.form" label-width="110px">
-        <el-form-item label="主机" required>
-          <el-input v-model="upDialog.form.host" placeholder="域名或 IP" />
+        <el-form-item :label="t('common.host')" required>
+          <el-input v-model="upDialog.form.host" :placeholder="t('proxyGroups.upstreamHostPlaceholder')" />
         </el-form-item>
-        <el-form-item label="端口" required>
+        <el-form-item :label="t('common.port')" required>
           <el-input-number v-model="upDialog.form.port" :min="1" :max="65535" />
         </el-form-item>
-        <el-form-item label="用户名模板">
-          <el-input v-model="upDialog.form.usernameTemplate" placeholder="如 acct-{region}-{session}" />
+        <el-form-item :label="t('proxyGroups.usernameTemplate')">
+          <el-input v-model="upDialog.form.usernameTemplate" :placeholder="t('proxyGroups.usernameTplPlaceholder')" />
         </el-form-item>
-        <el-form-item label="上游密码">
-          <el-input v-model="upDialog.form.pwd" type="password" show-password placeholder="上游 SOCKS5 密码" />
+        <el-form-item :label="t('proxyGroups.upstreamPwd')">
+          <el-input v-model="upDialog.form.pwd" type="password" show-password :placeholder="t('proxyGroups.upstreamPwdPlaceholder')" />
         </el-form-item>
-        <el-form-item label="权重">
+        <el-form-item :label="t('common.weight')">
           <el-input-number v-model="upDialog.form.weight" :min="1" />
         </el-form-item>
       </el-form>
 
       <!-- 添加模式：单条 / 批量 两 tab -->
       <el-tabs v-else v-model="upDialog.tab">
-        <el-tab-pane label="单条添加" name="single">
+        <el-tab-pane :label="t('proxyGroups.tabSingle')" name="single">
           <el-form v-if="upDialog.form" :model="upDialog.form" label-width="110px">
-            <el-form-item label="主机" required>
-              <el-input v-model="upDialog.form.host" placeholder="域名或 IP" />
+            <el-form-item :label="t('common.host')" required>
+              <el-input v-model="upDialog.form.host" :placeholder="t('proxyGroups.upstreamHostPlaceholder')" />
             </el-form-item>
-            <el-form-item label="端口" required>
+            <el-form-item :label="t('common.port')" required>
               <el-input-number v-model="upDialog.form.port" :min="1" :max="65535" />
             </el-form-item>
-            <el-form-item label="用户名模板">
-              <el-input v-model="upDialog.form.usernameTemplate" placeholder="如 acct-{region}-{session}" />
+            <el-form-item :label="t('proxyGroups.usernameTemplate')">
+              <el-input v-model="upDialog.form.usernameTemplate" :placeholder="t('proxyGroups.usernameTplPlaceholder')" />
             </el-form-item>
-            <el-form-item label="上游密码">
-              <el-input v-model="upDialog.form.pwd" type="password" show-password placeholder="上游 SOCKS5 密码" />
+            <el-form-item :label="t('proxyGroups.upstreamPwd')">
+              <el-input v-model="upDialog.form.pwd" type="password" show-password :placeholder="t('proxyGroups.upstreamPwdPlaceholder')" />
             </el-form-item>
-            <el-form-item label="权重">
+            <el-form-item :label="t('common.weight')">
               <el-input-number v-model="upDialog.form.weight" :min="1" />
             </el-form-item>
           </el-form>
         </el-tab-pane>
-        <el-tab-pane label="批量添加" name="batch">
+        <el-tab-pane :label="t('proxyGroups.tabBatch')" name="batch">
           <p class="text-muted batch-hint">
-            每行一条，支持 <code>user:pass@host:port</code> 或 <code>user:pass:host:port</code>；IPv6 请用
+            {{ t('proxyGroups.batchHint', { fmt1: 'user:pass@host:port', fmt2: 'user:pass:host:port' }) }}
             <code>user:pass@[::1]:port</code>。
           </p>
           <el-input
@@ -599,26 +637,26 @@ onMounted(loadGroups)
               :type="upDialog.result.failed.length === 0 ? 'success' : 'warning'"
               :closable="false"
               show-icon
-              :title="`成功 ${upDialog.result.ok} 条，失败 ${upDialog.result.failed.length} 条`"
+              :title="t('proxyGroups.failedSummary', { ok: upDialog.result.ok, failed: upDialog.result.failed.length })"
             />
             <ul v-if="upDialog.result.failed.length" class="fail-list">
-              <li v-for="(f, i) in upDialog.result.failed" :key="i">第 {{ f.line }} 行：{{ f.reason }}</li>
+              <li v-for="(f, i) in upDialog.result.failed" :key="i">{{ t('proxyGroups.failedLine', { line: f.line, reason: f.reason }) }}</li>
             </ul>
           </div>
         </el-tab-pane>
       </el-tabs>
 
       <template #footer>
-        <el-button @click="upDialog.visible = false">取消</el-button>
+        <el-button @click="upDialog.visible = false">{{ t('common.cancel') }}</el-button>
         <el-button
           v-if="!upDialog.isEdit && upDialog.tab === 'batch'"
           type="primary"
           :loading="upDialog.submitting"
           @click="submitBatchAdd"
         >
-          提交批量
+          {{ t('proxyGroups.submitBatch') }}
         </el-button>
-        <el-button v-else type="primary" @click="saveUpstream">保存</el-button>
+        <el-button v-else type="primary" @click="saveUpstream">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
   </div>

@@ -6,9 +6,13 @@
 // 代理用户仅能连 SOCKS5 代理，不能登录后台。
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import * as userApi from '@/api/user'
 import * as groupApi from '@/api/group'
 import { getServerInfo } from '@/api/system'
+
+// i18n：组件⑦用户名校验错误文案经 t() 翻译
+const { t } = useI18n()
 
 const loading = ref(false)
 const users = ref([])
@@ -49,6 +53,15 @@ async function loadProxyContext() {
 
 // ===== 编辑/新建用户弹窗（仅 用户名/密码/备注，不含授权）=====
 const dialog = reactive({ visible: false, isEdit: false, form: null })
+// 组件⑦：用户名输入校验。仅 ^[A-Za-z0-9]+$（与后端 ValidIdentifier 同规则）。
+// 编辑态 username 只读（:disabled），故该规则实际只在新建态触发。
+const userFormRef = ref(null)
+const userRules = {
+  username: [
+    { required: true, message: t('validate.required'), trigger: 'blur' },
+    { pattern: /^[A-Za-z0-9]+$/, message: t('validate.alnum'), trigger: 'blur' },
+  ],
+}
 function emptyForm() {
   return { id: null, username: '', password: '', remark: '' }
 }
@@ -64,8 +77,10 @@ function openEdit(row) {
 }
 async function save() {
   const f = dialog.form
-  if (!f.username) return ElMessage.warning('请输入用户名')
-  if (!dialog.isEdit && !f.password) return ElMessage.warning('请设置密码')
+  // 组件⑦：提交前先跑表单校验（用户名必填 + ^[A-Za-z0-9]+$），不通过则中止
+  const ok = await userFormRef.value?.validate().catch(() => false)
+  if (!ok) return
+  if (!dialog.isEdit && !f.password) return ElMessage.warning(t('users.setPasswordWarn'))
   try {
     if (dialog.isEdit) {
       // 编辑不再下发 groupIds，授权交由独立弹窗，避免误清空授权。
@@ -79,7 +94,7 @@ async function save() {
         remark: f.remark,
       })
     }
-    ElMessage.success('保存成功')
+    ElMessage.success(t('common.saveSuccess'))
     dialog.visible = false
     loadAll()
   } catch {
@@ -87,10 +102,10 @@ async function save() {
   }
 }
 async function remove(row) {
-  await ElMessageBox.confirm(`确认删除用户「${row.username}」？`, '提示', { type: 'warning' }).catch(() => 'cancel')
+  await ElMessageBox.confirm(t('users.deleteConfirm', { name: row.username }), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
   try {
     await userApi.deleteUser(row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleteSuccess'))
     loadAll()
   } catch {
     /* ignore */
@@ -117,7 +132,7 @@ async function saveAuth() {
       // 即便开启"全部"，仍按语义并存保留逐组精细授权
       groupIds: authDialog.groupIds,
     })
-    ElMessage.success('授权已保存')
+    ElMessage.success(t('users.authSaved'))
     authDialog.visible = false
     loadAll()
   } catch {
@@ -158,9 +173,9 @@ async function copyProxyAddr(row) {
       document.execCommand('copy')
       document.body.removeChild(ta)
     }
-    ElMessage.success('代理地址已复制')
+    ElMessage.success(t('users.copied'))
   } catch {
-    ElMessage.error('复制失败，请手动复制')
+    ElMessage.error(t('users.copyFailed'))
   }
 }
 
@@ -175,68 +190,68 @@ onMounted(() => {
     <el-card>
       <template #header>
         <div class="flex-between">
-          <span>用户管理（代理用户）</span>
-          <el-button type="primary" :icon="'Plus'" @click="openCreate">新建用户</el-button>
+          <span>{{ t('users.title') }}</span>
+          <el-button type="primary" :icon="'Plus'" @click="openCreate">{{ t('users.create') }}</el-button>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="users" border empty-text="暂无代理用户">
-        <el-table-column prop="username" label="用户名" min-width="160" />
-        <el-table-column label="已授权分组" min-width="260">
+      <el-table v-loading="loading" :data="users" border :empty-text="t('users.emptyUsers')">
+        <el-table-column prop="username" :label="t('users.username')" min-width="160" />
+        <el-table-column :label="t('users.authedGroups')" min-width="260">
           <template #default="{ row }">
-            <el-tag v-if="row.allGroups" type="success" size="small" class="mr4">全部代理组</el-tag>
+            <el-tag v-if="row.allGroups" type="success" size="small" class="mr4">{{ t('users.allGroups') }}</el-tag>
             <el-tag v-for="n in groupNames(row.groupIds)" :key="n" size="small" class="mr4">{{ n }}</el-tag>
-            <span v-if="!row.allGroups && groupNames(row.groupIds).length === 0" class="text-muted">未授权</span>
+            <span v-if="!row.allGroups && groupNames(row.groupIds).length === 0" class="text-muted">{{ t('users.notAuthed') }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column :label="t('common.actions')" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openAuth(row)">设置授权分组</el-button>
-            <el-button link type="primary" @click="copyProxyAddr(row)">复制代理地址</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button link type="primary" @click="openAuth(row)">{{ t('users.setAuth') }}</el-button>
+            <el-button link type="primary" @click="copyProxyAddr(row)">{{ t('users.copyProxyAddr') }}</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="remove(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
     <!-- 编辑/新建用户弹窗：仅 用户名/密码/备注 -->
-    <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? '编辑用户' : '新建用户'" width="520px">
-      <el-form v-if="dialog.form" :model="dialog.form" label-width="100px">
-        <el-form-item label="用户名" required>
-          <el-input v-model="dialog.form.username" :disabled="dialog.isEdit" placeholder="代理用户名" />
+    <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? t('users.editUser') : t('users.createUser')" width="520px">
+      <el-form v-if="dialog.form" ref="userFormRef" :model="dialog.form" :rules="userRules" label-width="100px">
+        <el-form-item :label="t('users.username')" prop="username">
+          <el-input v-model="dialog.form.username" :disabled="dialog.isEdit" :placeholder="t('users.usernamePlaceholder')" />
         </el-form-item>
-        <el-form-item :label="dialog.isEdit ? '重置密码' : '密码'" :required="!dialog.isEdit">
+        <el-form-item :label="dialog.isEdit ? t('users.resetPassword') : t('users.password')" :required="!dialog.isEdit">
           <el-input
             v-model="dialog.form.password"
             type="password"
             show-password
-            :placeholder="dialog.isEdit ? '留空表示不修改' : '设置密码'"
+            :placeholder="dialog.isEdit ? t('users.pwdEditPlaceholder') : t('users.pwdCreatePlaceholder')"
           />
         </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="dialog.form.remark" placeholder="可选备注" />
+        <el-form-item :label="t('users.remark')">
+          <el-input v-model="dialog.form.remark" :placeholder="t('users.optionalRemark')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="save">保存</el-button>
+        <el-button @click="dialog.visible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="save">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 独立授权弹窗（与编辑用户分离）-->
-    <el-dialog v-model="authDialog.visible" :title="`设置授权分组 - ${authDialog.username}`" width="520px">
+    <el-dialog v-model="authDialog.visible" :title="t('users.authDialogTitle', { name: authDialog.username })" width="520px">
       <el-form label-width="120px">
-        <el-form-item label="授权全部代理组">
+        <el-form-item :label="t('users.authAllGroups')">
           <el-switch v-model="authDialog.allGroups" />
-          <span class="text-muted hint">开启后该用户可访问所有代理组（仍保留下方逐组授权）</span>
+          <span class="text-muted hint">{{ t('users.authAllHint') }}</span>
         </el-form-item>
-        <el-form-item label="逐组授权">
+        <el-form-item :label="t('users.authPerGroup')">
           <el-select
             v-model="authDialog.groupIds"
             multiple
             clearable
-            placeholder="选择可访问分组"
+            :placeholder="t('users.selectAccessibleGroups')"
             style="width: 100%"
           >
             <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
@@ -244,8 +259,8 @@ onMounted(() => {
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="authDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="authDialog.saving" @click="saveAuth">保存授权</el-button>
+        <el-button @click="authDialog.visible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="authDialog.saving" @click="saveAuth">{{ t('users.saveAuth') }}</el-button>
       </template>
     </el-dialog>
   </div>

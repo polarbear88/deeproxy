@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"deeproxy/auth"
 	"deeproxy/pool/parse"
 	"deeproxy/store"
 )
@@ -124,6 +125,12 @@ func (a *App) handleCreateGroup(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "分组名不能为空")
 		return
 	}
+	// 分组名字符校验（组件⑦ AC-7.1）：仅允许英文字母与数字。根因见 auth.ValidIdentifier
+	// 文件头注释——名字含 '-' 会破坏连接鉴权的 user-group 切分。新增路径恒校验。
+	if !auth.ValidIdentifier(req.Name) {
+		respondError(c, http.StatusBadRequest, "分组名只能包含英文字母与数字")
+		return
+	}
 	if !validateGroupType(req.Type) {
 		respondError(c, http.StatusBadRequest, "分组类型非法（应为 A 或 B）")
 		return
@@ -164,6 +171,22 @@ func (a *App) handleUpdateGroup(c *gin.Context) {
 	}
 	if req.Name == "" {
 		respondError(c, http.StatusBadRequest, "分组名不能为空")
+		return
+	}
+	// 「仅变更才校验」（组件⑦ R-7 / AC-7.4）：按 ID 取旧记录，仅当分组名实际改变时才做
+	// 字符校验，避免强制迁移存量含特殊字符的旧分组。注意此处必须用 GetGroup(id)（WHERE id=?）
+	// 取旧值，而非 GetGroupByName(req.Name)（后者按【新名】查、rename 后会取到错记录或 nil）。
+	old, err := a.store.GetGroup(id)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "读取分组失败: "+err.Error())
+		return
+	}
+	if old == nil {
+		respondError(c, http.StatusNotFound, "分组不存在")
+		return
+	}
+	if req.Name != old.Name && !auth.ValidIdentifier(req.Name) {
+		respondError(c, http.StatusBadRequest, "分组名只能包含英文字母与数字")
 		return
 	}
 	// 改名重名校验：允许保留自身名字，但不得与「其它」分组撞名（同名→路由键覆盖）。

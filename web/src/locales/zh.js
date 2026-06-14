@@ -1,0 +1,382 @@
+// 中文翻译资源（默认 + fallback 语言）。
+// 设计原则（见 ralplan §四）：
+//   - action / matchType / groupType 三组 label 集中存放，组件用「内部英文值」拼 key
+//     （如 t('action.' + row.action)），数据层始终保持原始英文/原值，仅展示层翻译，
+//     满足「API/DB 不污染」硬约束。
+//   - 带连字符的 key（domain-suffix / ip-cidr）必须加引号。
+//   - zh.js 与 en.js 必须导出「完全相同」的 key 集合（G-2 门控），新增 key 两边同步。
+//   - 含 {var} 的文案是 vue-i18n 命名插值占位（如 t('common.deleteConfirm',{name})）；
+//     若文案要显示「字面量花括号」（如模板 {region}），必须用 {'{'}region{'}'} 转义，
+//     否则会被当成插值变量吞掉（namedVarBHint 即为此原因，曾出 bug）。
+export default {
+  // 动作：规则引擎三动作，组件②用 t('action.' + row.action) 拼接
+  action: {
+    forward: '转发',
+    direct: '直连',
+    reject: '拒绝',
+  },
+  // 规则 match 类型前缀，组件②用 t('matchType.' + type) 拼接
+  matchType: {
+    domain: '精确域名',
+    'domain-suffix': '域名后缀',
+    'ip-cidr': 'IP段',
+  },
+  // 代理分组类型：key 用内部值 A/B，值是去掉「Type A/B」字样的展示名（组件③）
+  groupType: {
+    A: '动态上游',
+    B: '代理池',
+  },
+  // 左侧菜单 / 页头标题，router meta.title 存这里的 key（组件②）
+  menu: {
+    dashboard: '仪表盘',
+    proxy: '代理组管理',
+    rule: '规则管理',
+    user: '用户管理',
+    syslog: '系统日志',
+    system: '系统设置',
+    login: '登录',
+    setup: '首次设置',
+  },
+  // 通用按钮 / 通用文案 / 通用 ElMessage 提示（跨页复用，DRY）
+  common: {
+    save: '保存',
+    cancel: '取消',
+    edit: '编辑',
+    delete: '删除',
+    confirm: '确认',
+    add: '新增',
+    create: '新建',
+    close: '关闭',
+    refresh: '刷新',
+    reset: '重置',
+    test: '测试',
+    search: '搜索',
+    actions: '操作',
+    enable: '启用',
+    disable: '禁用',
+    enabled: '已启用',
+    disabled: '已禁用',
+    name: '名称',
+    remark: '备注',
+    optionalRemark: '可选备注',
+    host: '主机',
+    port: '端口',
+    weight: '权重',
+    admin: '管理员',
+    logout: '退出登录',
+    // 通用提示词（用于「提示」标题等）
+    notice: '提示',
+    // 空表占位
+    empty: '暂无数据',
+    // 通用成功/失败 ElMessage
+    saveSuccess: '保存成功',
+    deleteSuccess: '已删除',
+    // 删除确认：{name} 为对象名；不带名字用 deleteConfirmPlain
+    deleteConfirm: '确认删除「{name}」？',
+    deleteConfirmPlain: '确认删除？',
+    // 退出登录确认框文案（MainLayout.vue ElMessageBox.confirm）
+    logoutConfirm: {
+      title: '提示',
+      message: '确认退出登录？',
+      confirm: '退出',
+      cancel: '取消',
+    },
+    // 主题切换 tooltip
+    switchLight: '切换亮色',
+    switchDark: '切换暗色',
+    // 语言切换控件
+    lang: '语言',
+  },
+  // 组件⑤：动态上游（Type A）流量入口等
+  group: {
+    traffic: '流量',
+    pool: '代理池',
+    // 流量图表抽屉标题（拼分组名）
+    trafficDrawerTitle: '分组流量',
+  },
+  // 仪表盘专有文案（组件②③ + 既有页面 AC-2.5 全量）
+  dashboard: {
+    noPoolGroup: '暂无代理池分组',
+    connFormatTitle: '连接用户名格式说明',
+    socks5Port: 'SOCKS5 监听端口',
+    webPort: 'Web 管理端口',
+    connExample: '连接示例',
+    basicFormat: '基本格式',
+    basicFormatHint: '首段=用户名，次段=代理组。',
+    // Type A → 去字样：动态上游格式说明
+    upstreamFormatA: '动态上游',
+    // Type B → 去字样：命名变量格式说明
+    namedVarB: '命名变量',
+    namedVarBHint: "_ 分隔名/值，# 分隔变量；替换上游模板 {'{'}region{'}'}/{'{'}session{'}'}。",
+    // 统计卡片标题
+    upRate: '上行速率',
+    downRate: '下行速率',
+    activeConns: '活跃连接',
+    todayTraffic: '今日流量',
+    todayReq: '今日请求',
+    todayReject: '今日拒连',
+    // 今日拒连 suffix：{rule} 规则拒、{auth} 鉴权拒
+    todayRejectSuffix: '规则{rule}/鉴权{auth}',
+    // 图表区
+    trafficReqTs: '总流量 / 请求数时序',
+    actionDist: '动作分布',
+    topGroups: '流量 Top 分组',
+    topUsers: '流量 Top 用户',
+    topDomains: 'Top 目标域名',
+    // 时序图图例/轴
+    legendUp: '上行',
+    legendDown: '下行',
+    legendReq: '请求数',
+    axisTraffic: '流量',
+    axisReq: '请求',
+    // 运行健康
+    runHealth: '运行健康',
+    memMB: '进程内存',
+    uptime: '运行时长',
+    healthyProxies: '健康代理概览',
+    // {healthy}/{total} 可用
+    healthyAvail: '{healthy} / {total} 可用',
+    // 连接示例密码占位（socks5://alice-default:<密码>@...）
+    passwordPlaceholder: '密码',
+    // 连接说明卡片底部提示
+    connTip: 'SOCKS5 密码字段需与代理用户密码匹配，并需该用户被授权访问目标分组。',
+  },
+  // 组件④：系统设置小卡片标题 + 字段标签（AC-2.5 全量）
+  settings: {
+    // 卡片标题
+    serverConn: '服务器与连接',
+    runtime: '运行期设置',
+    stat: '统计',
+    hcDefaults: '健康检查默认值',
+    adminPassword: '修改管理员密码',
+    importExport: '配置导入 / 导出',
+    // 字段
+    adminAccount: '管理员账号',
+    serverAddr: '服务器域名/IP',
+    serverAddrPlaceholder: '如 proxy.example.com 或 1.2.3.4',
+    serverAddrHint: '用于"复制代理地址"等连接提示；留空则用后端探测值',
+    probePoolSize: '健康检查协程池大小',
+    probePoolSizeHint: '限制并发健康探测数（默认 150，可热调整）',
+    defaultAction: '默认动作',
+    defaultActionHint: '规则全不命中时的兜底动作',
+    // 默认动作下拉 label（带英文值提示），value 仍为 forward/direct/reject
+    actionForwardOpt: '转发(forward)',
+    actionDirectOpt: '直连(direct)',
+    actionRejectOpt: '拒绝(reject)',
+    logLevel: '日志级别',
+    logLevelHint: '保存后立即热生效（无需重启）',
+    idleTimeout: '空闲超时(秒)',
+    idleTimeoutHint: '连接双向空闲回收（新连接生效，默认 300）',
+    sniffDomain: '域名嗅探',
+    sniffDomainHint: 'IP 未命中 ip-cidr 时嗅探 SNI/Host 还原域名',
+    sniffTimeout: '嗅探超时(毫秒)',
+    sniffTimeoutHint: '嗅探首包等待上限（新连接生效，默认 300）',
+    statRetention: '统计保留期(天)',
+    statRetentionHint: '过期聚合桶自动清理（默认 30）',
+    hcMode: '探测方式',
+    hcModePing: 'Ping',
+    hcModeUrl: '请求 URL',
+    hcUrl: '探测 URL',
+    hcInterval: '间隔(秒)',
+    hcFailThreshold: '失败阈值',
+    hcRecoverThreshold: '恢复阈值',
+    saveSettings: '保存设置',
+    saved: '已保存',
+    // 改密表单
+    currentPassword: '当前密码',
+    newPassword: '新密码',
+    confirmPassword: '确认新密码',
+    // 新密码输入框 placeholder（与改密按钮区分）
+    newPasswordPlaceholder: '至少 6 位',
+    // 改密提交按钮文案（注意：与 adminPassword 卡片标题「修改管理员密码」不同，勿合并）
+    changePasswordBtn: '修改密码',
+    pwdHint: '改密后所有会话失效，需重新登录',
+    pwdEnterCurrent: '请输入当前密码',
+    pwdEnterNew: '请输入新密码',
+    pwdMismatch: '两次新密码不一致',
+    pwdTooShort: '新密码至少 6 位',
+    pwdChanged: '密码已修改，请重新登录',
+    // 导入导出
+    exportConfig: '导出配置 JSON',
+    importConfig: '导入配置 JSON',
+    importExportTip: '导出含分组/规则/用户/授权（带 schemaVersion）；导入为整体覆盖，后端导入前会自动备份。',
+    exported: '已导出',
+    importInvalidJson: '文件不是合法 JSON',
+    importConfirm: '导入将整体覆盖当前配置（后端导入前会自动备份），确认继续？',
+    importSuccess: '导入成功',
+  },
+  // 组件⑦：输入校验错误文案
+  validate: {
+    alnum: '只能包含英文字母与数字',
+    required: '此项为必填',
+  },
+  // 规则页专有文案（组件②，AC-2.5 全量）
+  rules: {
+    title: '规则管理',
+    // 规则组表
+    emptyRuleGroups: '暂无规则组',
+    rgName: '规则组名称',
+    scope: '作用域',
+    scopeGlobal: '全局（优先）',
+    scopeGroup: '分组',
+    scopeGlobalShort: '全局',
+    applyGroups: '应用分组',
+    allGroups: '全部分组',
+    notApplied: '未应用',
+    ruleCount: '规则数',
+    // 规则组按钮
+    btnRules: '规则',
+    // 规则组对话框
+    editRuleGroup: '编辑规则组',
+    createRuleGroup: '新建规则组',
+    selectGroups: '选择分组',
+    rgNameRequired: '请输入规则组名称',
+    // 删除规则组确认：{name}
+    deleteRgConfirm: '确认删除规则组「{name}」？',
+    // 规则抽屉
+    drawerTitle: '规则 - {name}',
+    orderHint: '组内按顺序(order)首匹配；全局组优先于分组组。',
+    addRule: '添加规则',
+    emptyRules: '暂无规则',
+    order: '顺序',
+    matchType: '匹配类型',
+    matchValue: '匹配值',
+    matchValuePlaceholder: '如 google.com 或 192.168.0.0/16',
+    deleteRuleConfirm: '确认删除该规则？',
+    editRule: '编辑规则',
+    createRule: '新建规则',
+    // 测试器
+    tester: '规则测试',
+    testTarget: '测试目标',
+    testTargetPlaceholder: '域名或 IP',
+    testGroup: '分组',
+    testGroupPlaceholder: '选择分组',
+    testResult: '测试结果',
+    hitRule: '命中规则',
+    noHit: '未命中（走默认动作）',
+    source: '来源',
+    enterTargetWarn: '请输入域名或 IP',
+    selectGroupWarn: '请选择分组',
+    enterMatchValueWarn: '请输入匹配值',
+  },
+  // 代理组页专有文案（组件③⑤，AC-2.5 全量）
+  proxyGroups: {
+    title: '代理组管理',
+    create: '新建代理组',
+    emptyGroups: '暂无代理组',
+    name: '名称',
+    namePlaceholder: '分组名称',
+    remark: '备注',
+    type: '类型',
+    todayTraffic: '今日流量',
+    todayReq: '今日请求',
+    pool: '代理池',
+    // 删除分组确认：{name}
+    deleteConfirm: '确认删除分组「{name}」？',
+    // 组对话框
+    editGroup: '编辑代理组',
+    createGroup: '新建代理组',
+    healthCheck: '健康检查',
+    hcEnable: '启用',
+    hcMode: '探测方式',
+    hcModeUrl: '请求 URL',
+    hcUrl: '探测 URL',
+    hcInterval: '间隔(秒)',
+    hcFailThreshold: '失败阈值',
+    hcFailHint: '连续失败次数标记不可用',
+    hcRecoverThreshold: '恢复阈值',
+    hcRecoverHint: '连续成功次数恢复',
+    // 上游池抽屉（Type B）
+    poolDrawerTitle: '代理池 - {name}',
+    poolTemplateHint: "命名变量模板：用户名里写 {'{'}region{'}'} 等占位，客户端尾段按名替换。",
+    addUpstream: '添加上游',
+    searchPlaceholder: '按主机/用户名搜索',
+    healthStatePlaceholder: '健康状态',
+    stateHealthy: '可用',
+    stateUnhealthy: '不可用',
+    stateUnknown: '未知',
+    selectAllByFilter: '按当前筛选跨页全选',
+    bulkSetWeight: '批量设权重',
+    bulkEnable: '批量启用',
+    bulkDisable: '批量禁用',
+    emptyUpstreams: '暂无上游代理',
+    address: '地址',
+    usernameTemplate: '用户名模板',
+    health: '健康',
+    latency: '延迟',
+    // 流量图抽屉
+    groupTraffic24h: '分组流量（24h）',
+    topDomains: 'Top 目标域名',
+    legendUp: '上行',
+    legendDown: '下行',
+    // 上游编辑/添加
+    editUpstream: '编辑上游',
+    upstreamHostPlaceholder: '域名或 IP',
+    usernameTplPlaceholder: "如 acct-{'{'}region{'}'}-{'{'}session{'}'}",
+    upstreamPwd: '上游密码',
+    upstreamPwdPlaceholder: '上游 SOCKS5 密码',
+    tabSingle: '单条添加',
+    tabBatch: '批量添加',
+    batchHint: '每行一条，支持 {fmt1} 或 {fmt2}；IPv6 请用',
+    submitBatch: '提交批量',
+    // ElMessage 提示
+    enterHostWarn: '请输入上游主机',
+    pasteUpstreamWarn: '请粘贴至少一行上游',
+    addOkCount: '成功添加 {ok} 条',
+    addPartial: '成功 {ok} 条，失败 {failed} 条',
+    deleteUpstreamConfirm: '确认删除该上游？',
+    selectUpstreamWarn: '请先选择上游',
+    bulkAffected: '{msg}（影响 {n} 条）',
+    bulkWeightDone: '已批量设置权重',
+    bulkEnableDone: '已批量启用',
+    bulkDisableDone: '已批量禁用',
+    setWeightPrompt: '为选中上游设置统一权重',
+    setWeightTitle: '批量设置权重',
+    positiveIntError: '请输入正整数',
+    selectAllByFilterMsg: '已按当前筛选全选（共 {total} 条）',
+    selectedCount: '已选 {n} 条',
+    testOk: '连通，延迟 {ms}ms',
+    testFail: '不通：{err}',
+    unknownError: '未知错误',
+    // 失败行回显：第 {line} 行：{reason}
+    failedLine: '第 {line} 行：{reason}',
+    failedSummary: '成功 {ok} 条，失败 {failed} 条',
+  },
+  // 用户页专有文案（组件⑦，AC-2.5 全量）
+  users: {
+    title: '用户管理（代理用户）',
+    create: '新建用户',
+    emptyUsers: '暂无代理用户',
+    username: '用户名',
+    usernamePlaceholder: '代理用户名',
+    authedGroups: '已授权分组',
+    allGroups: '全部代理组',
+    notAuthed: '未授权',
+    setAuth: '设置授权分组',
+    copyProxyAddr: '复制代理地址',
+    // 编辑/新建弹窗
+    editUser: '编辑用户',
+    createUser: '新建用户',
+    resetPassword: '重置密码',
+    password: '密码',
+    pwdEditPlaceholder: '留空表示不修改',
+    pwdCreatePlaceholder: '设置密码',
+    setPasswordWarn: '请设置密码',
+    remark: '备注',
+    optionalRemark: '可选备注',
+    // 删除用户确认：{name}
+    deleteConfirm: '确认删除用户「{name}」？',
+    // 授权弹窗
+    authDialogTitle: '设置授权分组 - {name}',
+    authAllGroups: '授权全部代理组',
+    authAllHint: '开启后该用户可访问所有代理组（仍保留下方逐组授权）',
+    authPerGroup: '逐组授权',
+    selectAccessibleGroups: '选择可访问分组',
+    saveAuth: '保存授权',
+    authSaved: '授权已保存',
+    // 复制代理地址
+    copied: '代理地址已复制',
+    copyFailed: '复制失败，请手动复制',
+    pwdPlaceholder: '密码',
+  },
+}

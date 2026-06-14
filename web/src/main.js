@@ -7,7 +7,9 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 import App from './App.vue'
 import router from './router'
+import i18n from './locales'
 import { useThemeStore } from './stores/theme'
+import { useLangStore } from './stores/lang'
 import './styles/index.scss'
 
 const app = createApp(App)
@@ -15,6 +17,7 @@ const pinia = createPinia()
 
 app.use(pinia)
 app.use(router)
+app.use(i18n)
 // Element Plus 组件由 unplugin 自动按需引入，这里仅显式 use 一次以注册指令/全局配置
 app.use(ElementPlus)
 
@@ -23,7 +26,8 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
-// 在挂载前应用持久化的主题（暗/亮），避免首屏闪烁
+// 在挂载前应用持久化的主题（暗/亮）与语言（中/英），避免首屏闪烁/语言抖动
 useThemeStore(pinia).applyTheme()
+useLangStore(pinia).applyLocale()
 
 app.mount('#app')

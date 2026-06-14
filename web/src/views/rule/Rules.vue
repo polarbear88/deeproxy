@@ -4,9 +4,13 @@
 // - Rule: { id,match,action,order }。
 // - 测试器 /rule-groups/test {target,groupId} → {action,matchedRule,fromGroup,matched,sniffNote}。
 import { onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as ruleApi from '@/api/rule'
 import * as groupApi from '@/api/group'
+
+// i18n：仅展示层翻译，数据层（match/action 等）始终保持原始英文值（API/DB 不污染）
+const { t } = useI18n()
 
 const loading = ref(false)
 const ruleGroups = ref([])
@@ -45,7 +49,7 @@ function openEditRg(row) {
 }
 async function saveRg() {
   const f = rgDialog.form
-  if (!f.name) return ElMessage.warning('请输入规则组名称')
+  if (!f.name) return ElMessage.warning(t('rules.rgNameRequired'))
   try {
     let id = f.id
     if (rgDialog.isEdit) {
@@ -58,7 +62,7 @@ async function saveRg() {
     if (f.scope === 'group' && id) {
       await ruleApi.setRuleGroupGroups(id, f.groupIds || [])
     }
-    ElMessage.success('保存成功')
+    ElMessage.success(t('common.saveSuccess'))
     rgDialog.visible = false
     loadAll()
   } catch {
@@ -66,10 +70,10 @@ async function saveRg() {
   }
 }
 async function removeRg(row) {
-  await ElMessageBox.confirm(`确认删除规则组「${row.name}」？`, '提示', { type: 'warning' }).catch(() => 'cancel')
+  await ElMessageBox.confirm(t('rules.deleteRgConfirm', { name: row.name }), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
   try {
     await ruleApi.deleteRuleGroup(row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleteSuccess'))
     loadAll()
   } catch {
     /* ignore */
@@ -107,12 +111,12 @@ function openEditRule(row) {
 }
 async function saveRule() {
   const f = ruleDialog.form
-  if (!f.matchValue) return ElMessage.warning('请输入匹配值')
+  if (!f.matchValue) return ElMessage.warning(t('rules.enterMatchValueWarn'))
   const payload = { match: `${f.matchType}:${f.matchValue}`, action: f.action, order: f.order }
   try {
     if (ruleDialog.isEdit) await ruleApi.updateRule(ruleDrawer.rg.id, f.id, payload)
     else await ruleApi.createRule(ruleDrawer.rg.id, payload)
-    ElMessage.success('保存成功')
+    ElMessage.success(t('common.saveSuccess'))
     ruleDialog.visible = false
     loadRules(ruleDrawer.rg.id)
   } catch {
@@ -120,10 +124,10 @@ async function saveRule() {
   }
 }
 async function removeRule(row) {
-  await ElMessageBox.confirm('确认删除该规则？', '提示', { type: 'warning' }).catch(() => 'cancel')
+  await ElMessageBox.confirm(t('rules.deleteRuleConfirm'), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
   try {
     await ruleApi.deleteRule(ruleDrawer.rg.id, row.id)
-    ElMessage.success('已删除')
+    ElMessage.success(t('common.deleteSuccess'))
     loadRules(ruleDrawer.rg.id)
   } catch {
     /* ignore */
@@ -137,8 +141,8 @@ function openTester() {
   tester.visible = true
 }
 async function runTest() {
-  if (!tester.target) return ElMessage.warning('请输入域名或 IP')
-  if (!tester.groupId) return ElMessage.warning('请选择分组')
+  if (!tester.target) return ElMessage.warning(t('rules.enterTargetWarn'))
+  if (!tester.groupId) return ElMessage.warning(t('rules.selectGroupWarn'))
   try {
     tester.result = await ruleApi.testRule({ target: tester.target, groupId: tester.groupId })
   } catch {
@@ -150,6 +154,17 @@ function actionTag(action) {
   return action === 'forward' ? 'success' : action === 'direct' ? 'primary' : 'danger'
 }
 
+// 匹配串展示：将 "type:value" 的类型前缀翻译为本地化标签，value 原样保留。
+// 用 indexOf(':') 而非 split，避免 ip-cidr 的 IPv6/CIDR（含多个冒号）被错误切分。
+function matchLabel(match) {
+  if (!match) return ''
+  const i = match.indexOf(':')
+  if (i < 0) return match
+  const type = match.slice(0, i)
+  const value = match.slice(i + 1)
+  return `${t('matchType.' + type)}: ${value}`
+}
+
 onMounted(loadAll)
 </script>
 
@@ -158,140 +173,142 @@ onMounted(loadAll)
     <el-card>
       <template #header>
         <div class="flex-between">
-          <span>规则管理</span>
+          <span>{{ t('rules.title') }}</span>
           <div>
-            <el-button :icon="'MagicStick'" @click="openTester">规则测试器</el-button>
-            <el-button type="primary" :icon="'Plus'" @click="openCreateRg">新建规则组</el-button>
+            <el-button :icon="'MagicStick'" @click="openTester">{{ t('rules.tester') }}</el-button>
+            <el-button type="primary" :icon="'Plus'" @click="openCreateRg">{{ t('common.add') }}</el-button>
           </div>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="ruleGroups" border empty-text="暂无规则组">
-        <el-table-column prop="name" label="规则组名称" min-width="160" />
-        <el-table-column label="作用域" width="160">
+      <el-table v-loading="loading" :data="ruleGroups" border :empty-text="t('rules.emptyRuleGroups')">
+        <el-table-column prop="name" :label="t('rules.rgName')" min-width="160" />
+        <el-table-column :label="t('rules.scope')" width="160">
           <template #default="{ row }">
             <el-tag :type="row.scope === 'global' ? 'danger' : 'primary'" effect="plain">
-              {{ row.scope === 'global' ? '全局（优先）' : '分组' }}
+              {{ row.scope === 'global' ? t('rules.scopeGlobal') : t('rules.scopeGroup') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="应用分组" min-width="200">
+        <el-table-column :label="t('rules.applyGroups')" min-width="200">
           <template #default="{ row }">
-            <template v-if="row.scope === 'global'"><span class="text-muted">全部分组</span></template>
+            <template v-if="row.scope === 'global'"><span class="text-muted">{{ t('rules.allGroups') }}</span></template>
             <template v-else>
               <el-tag v-for="g in row.groups || []" :key="g.id" class="mr4" size="small">{{ g.name }}</el-tag>
-              <span v-if="!row.groups || row.groups.length === 0" class="text-muted">未应用</span>
+              <span v-if="!row.groups || row.groups.length === 0" class="text-muted">{{ t('rules.notApplied') }}</span>
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="规则数" width="90" prop="ruleCount" />
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column :label="t('rules.ruleCount')" width="90" prop="ruleCount" />
+        <el-table-column :label="t('common.actions')" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openRules(row)">规则</el-button>
-            <el-button link type="primary" @click="openEditRg(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeRg(row)">删除</el-button>
+            <el-button link type="primary" @click="openRules(row)">{{ t('rules.btnRules') }}</el-button>
+            <el-button link type="primary" @click="openEditRg(row)">{{ t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="removeRg(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
     <!-- 规则组编辑 -->
-    <el-dialog v-model="rgDialog.visible" :title="rgDialog.isEdit ? '编辑规则组' : '新建规则组'" width="520px">
+    <el-dialog v-model="rgDialog.visible" :title="rgDialog.isEdit ? t('rules.editRuleGroup') : t('rules.createRuleGroup')" width="520px">
       <el-form v-if="rgDialog.form" :model="rgDialog.form" label-width="100px">
-        <el-form-item label="名称" required>
+        <el-form-item :label="t('common.name')" required>
           <el-input v-model="rgDialog.form.name" />
         </el-form-item>
-        <el-form-item label="作用域">
+        <el-form-item :label="t('rules.scope')">
           <el-radio-group v-model="rgDialog.form.scope">
-            <el-radio value="global">全局</el-radio>
-            <el-radio value="group">分组</el-radio>
+            <el-radio value="global">{{ t('rules.scopeGlobalShort') }}</el-radio>
+            <el-radio value="group">{{ t('rules.scopeGroup') }}</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="rgDialog.form.scope === 'group'" label="应用分组">
-          <el-select v-model="rgDialog.form.groupIds" multiple placeholder="选择分组" style="width: 100%">
+        <el-form-item v-if="rgDialog.form.scope === 'group'" :label="t('rules.applyGroups')">
+          <el-select v-model="rgDialog.form.groupIds" multiple :placeholder="t('rules.selectGroups')" style="width: 100%">
             <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="rgDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="saveRg">保存</el-button>
+        <el-button @click="rgDialog.visible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveRg">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 规则抽屉 -->
-    <el-drawer v-model="ruleDrawer.visible" :title="`规则 - ${ruleDrawer.rg?.name || ''}`" size="55%">
+    <el-drawer v-model="ruleDrawer.visible" :title="t('rules.drawerTitle', { name: ruleDrawer.rg?.name || '' })" size="55%">
       <div class="flex-between drawer-toolbar">
-        <span class="text-muted">组内按顺序(order)首匹配；全局组优先于分组组。</span>
-        <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateRule">添加规则</el-button>
+        <span class="text-muted">{{ t('rules.orderHint') }}</span>
+        <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateRule">{{ t('rules.addRule') }}</el-button>
       </div>
-      <el-table :data="ruleDrawer.list" border size="small" empty-text="暂无规则">
-        <el-table-column prop="order" label="顺序" width="70" />
-        <el-table-column prop="match" label="匹配" min-width="220" />
-        <el-table-column label="动作" width="110">
+      <el-table :data="ruleDrawer.list" border size="small" :empty-text="t('rules.emptyRules')">
+        <el-table-column prop="order" :label="t('rules.order')" width="70" />
+        <el-table-column :label="t('rules.matchCol')" min-width="220">
+          <template #default="{ row }">{{ matchLabel(row.match) }}</template>
+        </el-table-column>
+        <el-table-column :label="t('rules.actionCol')" width="110">
           <template #default="{ row }">
-            <el-tag size="small" :type="actionTag(row.action)" effect="plain">{{ row.action }}</el-tag>
+            <el-tag size="small" :type="actionTag(row.action)" effect="plain">{{ t('action.' + row.action) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column :label="t('common.actions')" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEditRule(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeRule(row)">删除</el-button>
+            <el-button link type="primary" @click="openEditRule(row)">{{ t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="removeRule(row)">{{ t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-drawer>
 
     <!-- 规则编辑 -->
-    <el-dialog v-model="ruleDialog.visible" :title="ruleDialog.isEdit ? '编辑规则' : '添加规则'" width="520px">
+    <el-dialog v-model="ruleDialog.visible" :title="ruleDialog.isEdit ? t('rules.editRule') : t('rules.createRule')" width="520px">
       <el-form v-if="ruleDialog.form" :model="ruleDialog.form" label-width="100px">
-        <el-form-item label="匹配类型">
+        <el-form-item :label="t('rules.matchType')">
           <el-select v-model="ruleDialog.form.matchType">
-            <el-option label="domain（精确域名）" value="domain" />
-            <el-option label="domain-suffix（域名后缀）" value="domain-suffix" />
-            <el-option label="ip-cidr（IP/CIDR）" value="ip-cidr" />
+            <el-option :label="t('matchType.domain')" value="domain" />
+            <el-option :label="t('matchType.domain-suffix')" value="domain-suffix" />
+            <el-option :label="t('matchType.ip-cidr')" value="ip-cidr" />
           </el-select>
         </el-form-item>
-        <el-form-item label="匹配值" required>
-          <el-input v-model="ruleDialog.form.matchValue" placeholder="如 google.com 或 192.168.0.0/16" />
+        <el-form-item :label="t('rules.matchValue')" required>
+          <el-input v-model="ruleDialog.form.matchValue" :placeholder="t('rules.matchValuePlaceholder')" />
         </el-form-item>
-        <el-form-item label="动作">
+        <el-form-item :label="t('rules.actionCol')">
           <el-radio-group v-model="ruleDialog.form.action">
-            <el-radio value="forward">forward</el-radio>
-            <el-radio value="direct">direct</el-radio>
-            <el-radio value="reject">reject</el-radio>
+            <el-radio value="forward">{{ t('action.forward') }}</el-radio>
+            <el-radio value="direct">{{ t('action.direct') }}</el-radio>
+            <el-radio value="reject">{{ t('action.reject') }}</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="顺序">
+        <el-form-item :label="t('rules.order')">
           <el-input-number v-model="ruleDialog.form.order" :min="0" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="ruleDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="saveRule">保存</el-button>
+        <el-button @click="ruleDialog.visible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveRule">{{ t('common.save') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 规则测试器 -->
-    <el-dialog v-model="tester.visible" title="规则测试器" width="560px">
+    <el-dialog v-model="tester.visible" :title="t('rules.tester')" width="560px">
       <el-form label-width="100px">
-        <el-form-item label="目标">
-          <el-input v-model="tester.target" placeholder="域名或 IP" />
+        <el-form-item :label="t('rules.testTarget')">
+          <el-input v-model="tester.target" :placeholder="t('rules.testTargetPlaceholder')" />
         </el-form-item>
-        <el-form-item label="分组">
-          <el-select v-model="tester.groupId" placeholder="选择分组" style="width: 100%">
+        <el-form-item :label="t('rules.testGroup')">
+          <el-select v-model="tester.groupId" :placeholder="t('rules.testGroupPlaceholder')" style="width: 100%">
             <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
         </el-form-item>
       </el-form>
       <div v-if="tester.result" class="test-result">
         <el-descriptions :column="1" border size="small">
-          <el-descriptions-item label="命中规则">
-            {{ tester.result.matchedRule || '未命中（走默认动作）' }}
+          <el-descriptions-item :label="t('rules.hitRule')">
+            {{ tester.result.matchedRule || t('rules.noHit') }}
           </el-descriptions-item>
-          <el-descriptions-item label="来源">{{ tester.result.fromGroup || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="最终动作">
-            <el-tag :type="actionTag(tester.result.action)" effect="plain">{{ tester.result.action }}</el-tag>
+          <el-descriptions-item :label="t('rules.source')">{{ tester.result.fromGroup || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('rules.testResult')">
+            <el-tag :type="actionTag(tester.result.action)" effect="plain">{{ t('action.' + tester.result.action) }}</el-tag>
           </el-descriptions-item>
         </el-descriptions>
         <el-alert
@@ -304,8 +321,8 @@ onMounted(loadAll)
         />
       </div>
       <template #footer>
-        <el-button @click="tester.visible = false">关闭</el-button>
-        <el-button type="primary" @click="runTest">测试</el-button>
+        <el-button @click="tester.visible = false">{{ t('common.close') }}</el-button>
+        <el-button type="primary" @click="runTest">{{ t('common.test') }}</el-button>
       </template>
     </el-dialog>
   </div>

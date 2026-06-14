@@ -13,6 +13,8 @@
   /* 侧边栏宽度 */
   --dp-aside-width: 220px;
   --dp-aside-width-collapsed: 64px;
+  /* 全局卡片圆角：覆盖 Element Plus el-card 默认圆角，全站 el-card 统一生效（组件④ AC-4.3） */
+  --el-card-border-radius: 12px;
 }
 
 html.dark {

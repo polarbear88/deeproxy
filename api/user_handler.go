@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"deeproxy/auth"
 	"deeproxy/store"
 )
 
@@ -82,6 +83,12 @@ func (a *App) handleCreateUser(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, "用户名与密码不能为空")
 		return
 	}
+	// 用户名字符校验（组件⑦ AC-7.2）：仅允许英文字母与数字。根因见 auth.ValidIdentifier
+	// 文件头注释——用户名含 '-' 会破坏连接鉴权的 user-group 切分。新增路径恒校验。
+	if !auth.ValidIdentifier(req.Username) {
+		respondError(c, http.StatusBadRequest, "用户名只能包含英文字母与数字")
+		return
+	}
 	// ProxyUser 密码明文存储（用户决策：避免每连接 bcrypt ~49ms 拖慢建连，AC-43）。
 	// 仅 ProxyUser 如此；后台管理员密码仍 bcrypt。
 	u := store.ProxyUser{Username: req.Username, Pwd: req.Password, Remark: req.Remark}
@@ -112,6 +119,13 @@ func (a *App) handleUpdateUser(c *gin.Context) {
 	}
 	var req userReq
 	if !bindJSON(c, &req) {
+		return
+	}
+	// 「仅变更才校验」（组件⑦ R-7 / AC-7.4）：仅当用户名实际改变时才做字符校验，
+	// 避免强制迁移存量含特殊字符的旧用户。前端编辑态 username 只读、不会变，此处仅作
+	// PUT 直连防御。old 由上文 GetProxyUser(id) 取得。
+	if req.Username != old.Username && !auth.ValidIdentifier(req.Username) {
+		respondError(c, http.StatusBadRequest, "用户名只能包含英文字母与数字")
 		return
 	}
 	old.Username = req.Username

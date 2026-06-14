@@ -3,15 +3,19 @@
 // 对应 AC-25（左侧菜单、暗/亮模式）。
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useThemeStore } from '@/stores/theme'
+import { useLangStore } from '@/stores/lang'
 import { useUserStore } from '@/stores/user'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const themeStore = useThemeStore()
+const langStore = useLangStore()
 const userStore = useUserStore()
 
 // 从路由表动态生成菜单项（带 meta.title/icon 的子路由）
@@ -28,10 +32,10 @@ function go(name) {
 }
 
 async function handleLogout() {
-  await ElMessageBox.confirm('确认退出登录？', '提示', {
+  await ElMessageBox.confirm(t('common.logoutConfirm.message'), t('common.logoutConfirm.title'), {
     type: 'warning',
-    confirmButtonText: '退出',
-    cancelButtonText: '取消',
+    confirmButtonText: t('common.logoutConfirm.confirm'),
+    cancelButtonText: t('common.logoutConfirm.cancel'),
   }).catch(() => 'cancel')
   await userStore.logout()
   router.replace({ name: 'login' })
@@ -58,7 +62,7 @@ async function handleLogout() {
       >
         <el-menu-item v-for="r in menuRoutes" :key="r.name" :index="r.name">
           <el-icon><component :is="r.meta.icon" /></el-icon>
-          <template #title>{{ r.meta.title }}</template>
+          <template #title>{{ t(r.meta.title) }}</template>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -71,27 +75,41 @@ async function handleLogout() {
             <Fold v-if="!appStore.sidebarCollapsed" />
             <Expand v-else />
           </el-icon>
-          <span class="header-title">{{ route.meta?.title }}</span>
+          <span class="header-title">{{ route.meta?.title ? t(route.meta.title) : '' }}</span>
         </div>
         <div class="flex-row header-right">
           <!-- 暗/亮切换 -->
-          <el-tooltip :content="themeStore.isDark ? '切换亮色' : '切换暗色'" placement="bottom">
+          <el-tooltip :content="themeStore.isDark ? t('common.switchLight') : t('common.switchDark')" placement="bottom">
             <el-icon class="theme-btn" @click="themeStore.toggle">
               <Moon v-if="!themeStore.isDark" />
               <Sunny v-else />
             </el-icon>
           </el-tooltip>
-          <!-- 管理员下拉 -->
-          <el-dropdown @command="(c) => c === 'logout' && handleLogout()">
-            <span class="admin-trigger">
-              <el-icon><Avatar /></el-icon>
-              <span class="admin-name">{{ userStore.username || '管理员' }}</span>
+          <!-- 中/英语言切换：放在主题按钮与管理员下拉之间，风格与下拉一致 -->
+          <el-dropdown @command="(c) => langStore.setLocale(c)">
+            <span class="lang-trigger">
+              <el-icon><Operation /></el-icon>
+              <span class="lang-label">{{ langStore.locale === 'zh' ? '中文' : 'English' }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="go('system')">系统设置</el-dropdown-item>
-                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+                <el-dropdown-item command="zh" :disabled="langStore.locale === 'zh'">中文</el-dropdown-item>
+                <el-dropdown-item command="en" :disabled="langStore.locale === 'en'">English</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <!-- 管理员下拉 -->
+          <el-dropdown @command="(c) => c === 'logout' && handleLogout()">
+            <span class="admin-trigger">
+              <el-icon><Avatar /></el-icon>
+              <span class="admin-name">{{ userStore.username || t('common.admin') }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="go('system')">{{ t('menu.system') }}</el-dropdown-item>
+                <el-dropdown-item divided command="logout">{{ t('common.logout') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -178,6 +196,21 @@ async function handleLogout() {
     cursor: pointer;
     outline: none;
     .admin-name {
+      font-size: 14px;
+    }
+  }
+  // 语言切换控件：与管理员下拉同款样式，保持顶栏视觉一致
+  .lang-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    outline: none;
+    color: var(--el-text-color-regular);
+    &:hover {
+      color: var(--dp-brand);
+    }
+    .lang-label {
       font-size: 14px;
     }
   }

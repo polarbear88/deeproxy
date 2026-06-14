@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/gin-contrib/sse v1.1.0
 	github.com/gin-gonic/gin v1.12.0
+	github.com/kardianos/service v1.2.4
 	github.com/things-go/go-socks5 v0.1.1
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.56.0

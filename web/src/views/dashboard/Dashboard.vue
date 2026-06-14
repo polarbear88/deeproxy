@@ -7,12 +7,16 @@
 // - GET /dashboard/top?kind=group|user|domain → group/user:[{name,bytes}]、domain:[{name,count}]。
 // - GET /dashboard/runtime → { memMB,goroutines,groups:[{id,name,healthy,total,allDown}] }。
 import { onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import EChart from '@/components/EChart.js'
 import StatCard from '@/components/StatCard.vue'
 import { useThemeStore } from '@/stores/theme'
 import * as dashApi from '@/api/dashboard'
 import { getServerInfo } from '@/api/system'
 import { formatBytes, formatRate, formatNumber, formatUptime } from '@/utils/format'
+
+// i18n：仅展示层翻译，统计数据 name 字段（forward/direct/reject）保持原始值
+const { t } = useI18n()
 
 const overview = ref({
   upRate: 0,
@@ -140,49 +144,57 @@ const serverHost = computed(() => {
 
 // 真实 V2 连接示例：socks5://<user>-<group>:<pwd>@<server-addr>:<socks5-port>
 // 用占位 user/group/pwd，端口取真实监听端口，便于用户直接照抄替换。
+// 计算属性内调用 t，密码占位随语言切换重算（R-9）。
 const connectionExample = computed(() => {
   const port = serverInfo.value.socks5Port || 1080
-  return `socks5://alice-default:<密码>@${serverHost.value}:${port}`
+  return `socks5://alice-default:<${t('dashboard.passwordPlaceholder')}>@${serverHost.value}:${port}`
 })
 
 const tsOption = computed(() => ({
   tooltip: { trigger: 'axis' },
-  legend: { data: ['上行', '下行', '请求数'] },
+  legend: { data: [t('dashboard.legendUp'), t('dashboard.legendDown'), t('dashboard.legendReq')] },
   grid: { left: 50, right: 50, top: 40, bottom: 30 },
   xAxis: { type: 'category', boundaryGap: false, data: tsData.value.times },
   yAxis: [
-    { type: 'value', name: '流量', axisLabel: { formatter: (v) => formatBytes(v) } },
-    { type: 'value', name: '请求', position: 'right' },
+    { type: 'value', name: t('dashboard.axisTraffic'), axisLabel: { formatter: (v) => formatBytes(v) } },
+    { type: 'value', name: t('dashboard.axisReq'), position: 'right' },
   ],
   series: [
-    { name: '上行', type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: tsData.value.up },
-    { name: '下行', type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: tsData.value.down },
-    { name: '请求数', type: 'line', yAxisIndex: 1, smooth: true, data: tsData.value.req },
+    { name: t('dashboard.legendUp'), type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: tsData.value.up },
+    { name: t('dashboard.legendDown'), type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, data: tsData.value.down },
+    { name: t('dashboard.legendReq'), type: 'line', yAxisIndex: 1, smooth: true, data: tsData.value.req },
   ],
 }))
 
-const actionOption = computed(() => ({
-  tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-  legend: { bottom: 0 },
-  series: [
-    {
-      name: '动作分布',
-      type: 'pie',
-      radius: ['45%', '70%'],
-      avoidLabelOverlap: true,
-      itemStyle: { borderRadius: 6, borderColor: pieBorderColor.value, borderWidth: 2 },
-      label: { show: false },
-      data:
-        actionDist.value.length > 0
-          ? actionDist.value
-          : [
-              { name: 'forward', value: 0 },
-              { name: 'direct', value: 0 },
-              { name: 'reject', value: 0 },
-            ],
-    },
-  ],
-}))
+const actionOption = computed(() => {
+  // 原始数据：name 为后端英文动作值（forward/direct/reject），value 为计数。
+  // 展示层把 name 翻译为本地化标签（在 computed 内调用 t，随语言切换重算 — R-9），
+  // value 始终保持原始计数不变。占位空数据同样翻译。
+  const raw =
+    actionDist.value.length > 0
+      ? actionDist.value
+      : [
+          { name: 'forward', value: 0 },
+          { name: 'direct', value: 0 },
+          { name: 'reject', value: 0 },
+        ]
+  const data = raw.map((d) => ({ name: t('action.' + d.name), value: d.value }))
+  return {
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    legend: { bottom: 0 },
+    series: [
+      {
+        name: t('dashboard.actionDist'),
+        type: 'pie',
+        radius: ['45%', '70%'],
+        avoidLabelOverlap: true,
+        itemStyle: { borderRadius: 6, borderColor: pieBorderColor.value, borderWidth: 2 },
+        label: { show: false },
+        data,
+      },
+    ],
+  }
+})
 
 // Top 目标域名横向柱状图：y 轴为域名类目（inverse 让 Top1 在顶），x 轴为命中次数。
 // 绑定后端 domain 返回的 .count（非 group/user 的 .bytes）。
@@ -222,25 +234,25 @@ onBeforeUnmount(() => {
     <!-- 实时 + 今日指标 -->
     <el-row :gutter="16" class="dp-card-gap">
       <el-col :xs="12" :sm="8" :md="6" :lg="4">
-        <StatCard title="上行速率" :value="formatRate(overview.upRate)" icon="Top" color="#67c23a" />
+        <StatCard :title="t('dashboard.upRate')" :value="formatRate(overview.upRate)" icon="Top" color="#67c23a" />
       </el-col>
       <el-col :xs="12" :sm="8" :md="6" :lg="4">
-        <StatCard title="下行速率" :value="formatRate(overview.downRate)" icon="Bottom" color="#409eff" />
+        <StatCard :title="t('dashboard.downRate')" :value="formatRate(overview.downRate)" icon="Bottom" color="#409eff" />
       </el-col>
       <el-col :xs="12" :sm="8" :md="6" :lg="4">
-        <StatCard title="活跃连接" :value="formatNumber(overview.activeConns)" icon="Connection" color="#e6a23c" />
+        <StatCard :title="t('dashboard.activeConns')" :value="formatNumber(overview.activeConns)" icon="Connection" color="#e6a23c" />
       </el-col>
       <el-col :xs="12" :sm="8" :md="6" :lg="4">
-        <StatCard title="今日流量" :value="formatBytes(overview.todayUp + overview.todayDown)" icon="DataLine" color="#909399" />
+        <StatCard :title="t('dashboard.todayTraffic')" :value="formatBytes(overview.todayUp + overview.todayDown)" icon="DataLine" color="#909399" />
       </el-col>
       <el-col :xs="12" :sm="8" :md="6" :lg="4">
-        <StatCard title="今日请求" :value="formatNumber(overview.todayReq)" icon="Histogram" color="#9c27b0" />
+        <StatCard :title="t('dashboard.todayReq')" :value="formatNumber(overview.todayReq)" icon="Histogram" color="#9c27b0" />
       </el-col>
       <el-col :xs="12" :sm="8" :md="6" :lg="4">
         <StatCard
-          title="今日拒连"
+          :title="t('dashboard.todayReject')"
           :value="formatNumber(todayReject)"
-          :suffix="`规则${overview.todayRejectRule}/鉴权${overview.todayRejectAuth}`"
+          :suffix="t('dashboard.todayRejectSuffix', { rule: overview.todayRejectRule, auth: overview.todayRejectAuth })"
           icon="CircleClose"
           color="#f56c6c"
         />
@@ -253,7 +265,7 @@ onBeforeUnmount(() => {
         <el-card>
           <template #header>
             <div class="flex-between">
-              <span>总流量 / 请求数时序</span>
+              <span>{{ t('dashboard.trafficReqTs') }}</span>
               <el-radio-group v-model="timeWindow" size="small" @change="reloadByWindow">
                 <el-radio-button value="1h">1h</el-radio-button>
                 <el-radio-button value="24h">24h</el-radio-button>
@@ -266,7 +278,7 @@ onBeforeUnmount(() => {
       </el-col>
       <el-col :xs="24" :lg="8">
         <el-card>
-          <template #header><span>动作分布</span></template>
+          <template #header><span>{{ t('dashboard.actionDist') }}</span></template>
           <EChart :option="actionOption" height="320px" />
         </el-card>
       </el-col>
@@ -276,8 +288,8 @@ onBeforeUnmount(() => {
     <el-row :gutter="16" class="dp-card-gap">
       <el-col :xs="24" :md="8">
         <el-card>
-          <template #header><span>流量 Top 分组</span></template>
-          <el-table :data="topGroups" size="small" :show-header="false" empty-text="暂无数据">
+          <template #header><span>{{ t('dashboard.topGroups') }}</span></template>
+          <el-table :data="topGroups" size="small" :show-header="false" :empty-text="t('common.empty')">
             <el-table-column prop="name" />
             <el-table-column align="right" width="120">
               <template #default="{ row }">{{ formatBytes(row.bytes) }}</template>
@@ -287,8 +299,8 @@ onBeforeUnmount(() => {
       </el-col>
       <el-col :xs="24" :md="8">
         <el-card>
-          <template #header><span>流量 Top 用户</span></template>
-          <el-table :data="topUsers" size="small" :show-header="false" empty-text="暂无数据">
+          <template #header><span>{{ t('dashboard.topUsers') }}</span></template>
+          <el-table :data="topUsers" size="small" :show-header="false" :empty-text="t('common.empty')">
             <el-table-column prop="name" />
             <el-table-column align="right" width="120">
               <template #default="{ row }">{{ formatBytes(row.bytes) }}</template>
@@ -300,11 +312,11 @@ onBeforeUnmount(() => {
         <el-card>
           <template #header>
             <div class="flex-between">
-              <span>Top 目标域名</span>
+              <span>{{ t('dashboard.topDomains') }}</span>
             </div>
           </template>
           <EChart v-if="topDomains.length" :option="topDomainOption" height="240px" />
-          <el-empty v-else description="暂无数据" :image-size="60" />
+          <el-empty v-else :description="t('common.empty')" :image-size="60" />
         </el-card>
       </el-col>
     </el-row>
@@ -313,22 +325,22 @@ onBeforeUnmount(() => {
     <el-row :gutter="16" align="stretch">
       <el-col :xs="24" :lg="14">
         <el-card class="full-card">
-          <template #header><span>运行健康</span></template>
+          <template #header><span>{{ t('dashboard.runHealth') }}</span></template>
           <el-row :gutter="16">
             <el-col :span="8">
-              <StatCard title="进程内存" :value="runtime.memMB" suffix="MB" icon="Cpu" color="#409eff" />
+              <StatCard :title="t('dashboard.memMB')" :value="runtime.memMB" suffix="MB" icon="Cpu" color="#409eff" />
             </el-col>
             <el-col :span="8">
               <StatCard title="Goroutine" :value="formatNumber(runtime.goroutines)" icon="Operation" color="#67c23a" />
             </el-col>
             <el-col :span="8">
-              <StatCard title="运行时长" :value="formatUptime(overview.uptimeSec)" icon="Timer" color="#e6a23c" />
+              <StatCard :title="t('dashboard.uptime')" :value="formatUptime(overview.uptimeSec)" icon="Timer" color="#e6a23c" />
             </el-col>
           </el-row>
           <el-divider />
           <div class="flex-between">
-            <span class="text-muted">健康代理概览</span>
-            <span>{{ overview.healthyProxies }} / {{ overview.totalProxies }} 可用</span>
+            <span class="text-muted">{{ t('dashboard.healthyProxies') }}</span>
+            <span>{{ t('dashboard.healthyAvail', { healthy: overview.healthyProxies, total: overview.totalProxies }) }}</span>
           </div>
           <el-progress :percentage="healthRatio" :status="healthRatio < 50 ? 'exception' : 'success'" />
           <div class="group-health">
@@ -341,37 +353,37 @@ onBeforeUnmount(() => {
             >
               {{ g.name }}: {{ g.healthy }}/{{ g.total }}
             </el-tag>
-            <el-text v-if="!runtime.groups || runtime.groups.length === 0" type="info">暂无 Type B 分组</el-text>
+            <el-text v-if="!runtime.groups || runtime.groups.length === 0" type="info">{{ t('dashboard.noPoolGroup') }}</el-text>
           </div>
         </el-card>
       </el-col>
       <el-col :xs="24" :lg="10">
         <el-card class="full-card">
-          <template #header><span>连接用户名格式说明</span></template>
+          <template #header><span>{{ t('dashboard.connFormatTitle') }}</span></template>
           <!-- 服务端监听信息 + 真实连接示例（AC-2.6 / AC-4.2） -->
           <el-descriptions :column="1" border size="small" class="conn-ports">
-            <el-descriptions-item label="SOCKS5 监听端口">
+            <el-descriptions-item :label="t('dashboard.socks5Port')">
               <code>{{ serverInfo.socks5Port || '—' }}</code>
               <span class="text-muted"> @ {{ serverHost }}</span>
             </el-descriptions-item>
-            <el-descriptions-item label="Web 管理端口">
+            <el-descriptions-item :label="t('dashboard.webPort')">
               <code>{{ serverInfo.webPort || '—' }}</code>
             </el-descriptions-item>
-            <el-descriptions-item label="连接示例">
+            <el-descriptions-item :label="t('dashboard.connExample')">
               <code class="conn-example">{{ connectionExample }}</code>
             </el-descriptions-item>
           </el-descriptions>
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="基本格式">
+            <el-descriptions-item :label="t('dashboard.basicFormat')">
               <code>user-group</code>
-              <span class="text-muted"> — 首段=用户名，次段=代理组。</span>
+              <span class="text-muted"> — {{ t('dashboard.basicFormatHint') }}</span>
             </el-descriptions-item>
-            <el-descriptions-item label="Type A 动态上游">
+            <el-descriptions-item :label="t('dashboard.upstreamFormatA')">
               <code>user-group-base64(u:p@host:port)</code>
             </el-descriptions-item>
-            <el-descriptions-item label="Type B 命名变量">
+            <el-descriptions-item :label="t('dashboard.namedVarB')">
               <code>user-group-region_us#session_abc</code>
-              <span class="text-muted"> — _ 分隔名/值，# 分隔变量；替换上游模板 {region}/{session}。</span>
+              <span class="text-muted"> — {{ t('dashboard.namedVarBHint') }}</span>
             </el-descriptions-item>
           </el-descriptions>
           <el-alert
@@ -379,7 +391,7 @@ onBeforeUnmount(() => {
             type="info"
             :closable="false"
             show-icon
-            title="SOCKS5 密码字段需与代理用户密码匹配，并需该用户被授权访问目标分组。"
+            :title="t('dashboard.connTip')"
           />
         </el-card>
       </el-col>

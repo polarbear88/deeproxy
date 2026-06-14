@@ -1,5 +1,12 @@
 # Open Questions
 
+## ralplan-i18n-daemon-ui - 2026-06-14（共识修订后更新）
+- [ ] 组件⑦编辑旧记录策略「仅当 name/username 实际变更才校验」是否产品认可 — spec 只说「不强制迁移」，未明说编辑旧含特殊字符记录能否原样保存其他字段（R-7，AC-7.4）。**唯一阻塞性开放项**。
+- [ ] R-6 kardianos 确认性 spike（confirm-not-discover）：实现首步跑通 `WorkingDirectory`/Windows `Option["StartType"]`/`Status→Stop→poll→Uninstall→Install→enable/disable→Start` 均生效；个别失效切 A2（手写 systemd unit + sc.exe）。**非 load-bearing 未知，非阻塞**。
+- [x] ~~`--startup`/boot-enable 机制~~ — **已提交（R-5）**：Windows `Config.Option["StartType"]="automatic"/"manual"`；Linux `Install()` 后 raw `systemctl enable/disable`。systemd 无 kardianos StartType Option（删除错误说法）。
+- [x] ~~vue-i18n 版本~~ — **已提交 ^9**（Vue3 LTS，R-10/AC-1.1）。
+- [x] ~~Users.vue 表单结构未读取~~ — **已读取**：表单 `:205` 无 ref/rules、username 输入 `:206-207`（编辑态 disabled）、`save :65`；step 28 给出 `userFormRef`+`userRules` 具体落点（AC-7.2）。
+
 ## ralplan-deeproxy-v2 - 2026-06-13（Architect + Critic REVISE 后更新）
 - [x] ~~D0：go-socks5 鉴权对象跨阶段传递机制~~ — **已定稿 D0-0**：源码证实 `AuthContext.Payload` 含 user+password 且三阶段同 goroutine/同连接/不跨连接共享；沿用 v1 context(`decisionKey`) 机制，零并发风险。原 D0-A(sync.Map 待取表)已删除（解决伪问题）。
 - [x] ~~统计聚合桶时间粒度~~ — **已定稿（M3）**：单一分钟桶（group/user 维度）为唯一存储粒度；7d 视图查询期 `GROUP BY strftime('%Y-%m-%d %H',...)` 降采样。基数预算约 86.4 万行/30 天/20 活跃组合（AC-12/13/24）。
