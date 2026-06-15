@@ -198,11 +198,12 @@ func (a *App) handleTop(c *gin.Context) {
 		snap := a.holder.Load()
 		out := make([]topItem, 0, len(tops))
 		for _, t := range tops {
-			name := ""
-			if gv, ok := snap.GroupByID(t.GroupID); ok {
-				name = gv.Name
+			// 分组已删除（快照查不到）则跳过：删掉的分组不在流量 Top 排行里显示。
+			gv, ok := snap.GroupByID(t.GroupID)
+			if !ok {
+				continue
 			}
-			out = append(out, topItem{Name: name, Bytes: t.UpBytes + t.DownBytes})
+			out = append(out, topItem{Name: gv.Name, Bytes: t.UpBytes + t.DownBytes})
 		}
 		respondOK(c, out)
 	case "user":
@@ -224,7 +225,12 @@ func (a *App) handleTop(c *gin.Context) {
 		}
 		out := make([]topItem, 0, len(tops))
 		for _, t := range tops {
-			out = append(out, topItem{Name: nameByID[t.UserID], Bytes: t.UpBytes + t.DownBytes})
+			// 用户已删除（映射里没有）则跳过：删掉的用户不在流量 Top 排行里显示。
+			name, ok := nameByID[t.UserID]
+			if !ok {
+				continue
+			}
+			out = append(out, topItem{Name: name, Bytes: t.UpBytes + t.DownBytes})
 		}
 		respondOK(c, out)
 	case "domain":
