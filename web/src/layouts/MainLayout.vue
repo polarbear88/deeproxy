@@ -40,11 +40,13 @@ function onHamburger() {
 }
 
 async function handleLogout() {
-  await ElMessageBox.confirm(t('common.logoutConfirm.message'), t('common.logoutConfirm.title'), {
+  // 二次确认：取消即返回，避免未点确认就退出登录。
+  const ok = await ElMessageBox.confirm(t('common.logoutConfirm.message'), t('common.logoutConfirm.title'), {
     type: 'warning',
     confirmButtonText: t('common.logoutConfirm.confirm'),
     cancelButtonText: t('common.logoutConfirm.cancel'),
-  }).catch(() => 'cancel')
+  }).catch(() => false)
+  if (!ok) return
   await userStore.logout()
   router.replace({ name: 'login' })
 }

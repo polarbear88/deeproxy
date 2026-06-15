@@ -102,7 +102,9 @@ async function save() {
   }
 }
 async function remove(row) {
-  await ElMessageBox.confirm(t('users.deleteConfirm', { name: row.username }), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
+  // 二次确认：取消即返回，避免未点确认就删除用户。
+  const ok = await ElMessageBox.confirm(t('users.deleteConfirm', { name: row.username }), t('common.notice'), { type: 'warning' }).catch(() => false)
+  if (!ok) return
   try {
     await userApi.deleteUser(row.id)
     ElMessage.success(t('common.deleteSuccess'))

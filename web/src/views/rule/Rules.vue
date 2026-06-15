@@ -73,7 +73,9 @@ async function saveRg() {
   }
 }
 async function removeRg(row) {
-  await ElMessageBox.confirm(t('rules.deleteRgConfirm', { name: row.name }), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
+  // 二次确认：取消即返回，避免未点确认就删除规则组。
+  const ok = await ElMessageBox.confirm(t('rules.deleteRgConfirm', { name: row.name }), t('common.notice'), { type: 'warning' }).catch(() => false)
+  if (!ok) return
   try {
     await ruleApi.deleteRuleGroup(row.id)
     ElMessage.success(t('common.deleteSuccess'))
@@ -127,7 +129,9 @@ async function saveRule() {
   }
 }
 async function removeRule(row) {
-  await ElMessageBox.confirm(t('rules.deleteRuleConfirm'), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
+  // 二次确认：取消即返回，避免未点确认就删除规则。
+  const ok = await ElMessageBox.confirm(t('rules.deleteRuleConfirm'), t('common.notice'), { type: 'warning' }).catch(() => false)
+  if (!ok) return
   try {
     await ruleApi.deleteRule(ruleDrawer.rg.id, row.id)
     ElMessage.success(t('common.deleteSuccess'))

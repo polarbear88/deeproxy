@@ -73,7 +73,9 @@ async function saveGroup() {
   }
 }
 async function removeGroup(row) {
-  await ElMessageBox.confirm(t('proxyGroups.deleteConfirm', { name: row.name }), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
+  // 二次确认：取消时 confirm 会 reject，这里 catch 成 false 并提前返回；不能无条件往下执行删除。
+  const ok = await ElMessageBox.confirm(t('proxyGroups.deleteConfirm', { name: row.name }), t('common.notice'), { type: 'warning' }).catch(() => false)
+  if (!ok) return
   try {
     await groupApi.deleteGroup(row.id)
     ElMessage.success(t('common.deleteSuccess'))
@@ -228,7 +230,9 @@ async function submitBatchAdd() {
 }
 async function removeUpstream(row) {
   const gid = upstreamDrawer.group.id
-  await ElMessageBox.confirm(t('proxyGroups.deleteUpstreamConfirm'), t('common.notice'), { type: 'warning' }).catch(() => 'cancel')
+  // 二次确认：取消即返回，避免未点确认就删除上游。
+  const ok = await ElMessageBox.confirm(t('proxyGroups.deleteUpstreamConfirm'), t('common.notice'), { type: 'warning' }).catch(() => false)
+  if (!ok) return
   try {
     await groupApi.deleteUpstream(gid, row.id)
     ElMessage.success(t('common.deleteSuccess'))
