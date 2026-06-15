@@ -1,0 +1,95 @@
+{
+  "project": "deeproxy",
+  "feature": "实时连接 (Realtime Connections)",
+  "plan": ".omc/plans/realtime-connections-consensus-plan.md",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "connreg/ 中性叶子包：Registry + 有界 top-K 堆 Snapshot",
+      "priority": 1,
+      "passes": true,
+      "acceptanceCriteria": [
+        "新建 connreg/registry.go，package connreg，仅 import stdlib（sync, sync/atomic, time, sort, container/heap 或手写堆）——无任何项目包依赖",
+        "定义 ConnMeta{Target,Action,User,Group,Client string; Start time.Time}、ConnView{ID,StartUnix,DurationSec int64; Target,Action,Upstream,User,Group,Client string}、Registry（seq/hint atomic.Int64 + active sync.Map）、const DefaultLimit=500",
+        "Register(ConnMeta) int64：seq.Add(1)→填好 entry→active.Store→hint.Add(1)，O(1)，返回 connID",
+        "SetUpstream(id,string) 与 SetAction(id,string)：Load→atomic.Pointer[string].Store，O(1)；activeConn 的 upstream/action 用 atomic.Pointer[string]",
+        "Deregister(id)：active.Delete + hint.Add(-1)，O(1)；Len() 返回 int(hint.Load())",
+        "Snapshot(limit,sortBy)：单趟 Range 内有界堆 top-K，total=Range 计数（精确），truncated=total>limit；堆方向参数化：sort=start 用最小堆驱逐最小 start_ts（留 K 新），sort=duration 用最大堆驱逐最大 start_ts（留 K 旧=最长）；seq 入比较器破 start_ts 平局；出堆后 sort.SliceStable 排成展示序（start→start 降 seq 降；duration→start 升 seq 升）",
+        "limit 钳到 [1,DefaultLimit]；未知 sortBy 归 start；upstream/action nil 时 ConnView 用 空串/meta.Action 兜底；DurationSec=int64(now.Sub(Start).Seconds())，StartUnix=Start.Unix()",
+        "全中文注释解释为什么（堆有界成本、seq tiebreaker 无抖动、atomic.Pointer 并发读安全、不可变字段发布前填好）",
+        "go build ./connreg/ 通过"
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "server 装配：connectHandle 登记/注销 + upstream/action 回填",
+      "priority": 2,
+      "passes": true,
+      "acceptanceCriteria": [
+        "server/ctxkey.go：decision 结构加 connID int64 字段 + 中文注释",
+        "server/server.go：handler 结构加 conns *connreg.Registry 字段；import deeproxy/connreg",
+        "server.New 签名增加 conns *connreg.Registry 参数并接入 handler",
+        "connectHandle 进入处（紧随 h.counter.ConnOpened()）：经 writer.(net.Conn) 断言捕获客户端地址（禁用 req.RemoteAddr），调 Register 写入全部前置元数据，d.connID=id，紧接 defer h.conns.Deregister(id)（与 defer h.counter.ConnClosed() 同 defer 区）",
+        "抽取 upstreamString(d decision, view *snapshot.UpstreamView) string helper（处理 Type B view 与 Type A DynamicUpstream.Addr() 双分支），recordAudit 重构为调用之（DRY，行为不变）",
+        "dialAndRelay 与 handleSniff 拨号成功后调 h.conns.SetUpstream(d.connID, upstreamString(d, usedUpstream))",
+        "handleSniff 中 MatchRule 解析动作后、在 reject 守卫之后调 h.conns.SetAction(d.connID, string(action))——绝不在守卫前、绝不写 reject",
+        "server/relay.go 的 relayCounted/io.Copy 循环零改动（git diff 确认）",
+        "go build ./server/ 通过；go vet ./server/ 无新错误"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "main.go 单一共享实例装配",
+      "priority": 3,
+      "passes": true,
+      "acceptanceCriteria": [
+        "cmd/deeproxy/main.go 创建唯一 connReg := connreg.New()（registry/counter 附近）",
+        "同一 connReg 指针传入 server.New(...)（新签名）",
+        "同一 connReg 指针传入 api.NewApp(...)（第 12 位参数）",
+        "go build ./... 通过"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "API：handleListConnections + 路由 + NewApp 参数",
+      "priority": 4,
+      "passes": true,
+      "acceptanceCriteria": [
+        "api/server.go：App 结构加 connReg *connreg.Registry（与 registry *pool.Registry 区分命名）；import deeproxy/connreg",
+        "NewApp 加第 12 位参数 connReg *connreg.Registry + nil 兜底（if connReg==nil{connReg=connreg.New()}）",
+        "auth 组注册 GET /api/connections → a.handleListConnections",
+        "新建 api/connections_handler.go：limit=atoiDefault(query,connreg.DefaultLimit)，sort=DefaultQuery(start)，调 connReg.Snapshot，respondOK 返回 {items:[{id,target,action,upstream,user,group,client,start_ts,duration_sec}],total,limit,truncated}",
+        "全中文注释；go build ./api/ 通过"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "前端：RealtimeConnections.vue + 路由 + api 模块 + i18n",
+      "priority": 5,
+      "passes": true,
+      "acceptanceCriteria": [
+        "web/src/api/connections.js：getActiveConnections({limit,sort}) → request.get('/connections',{params})",
+        "web/src/router/index.js：dashboard 后加 /connections 子路由，meta:{title:menu.connections, icon:现有 Element Plus 图标串}",
+        "web/src/views/connections/RealtimeConnections.vue：el-table 7 列（目标主机/动作/连接时长/上游代理地址/用户名+分组名/客户端来源/开始时间）；动作列用 t(action.+row.action)（仅 forward/direct）；upstream 空串渲染 —；start_ts(unix秒)格式化；截断提示 truncatedHint{shown,total}；排序切换；自动刷新开关+间隔选择(2/5/10/关)默认开5s；onBeforeUnmount 清 clearInterval；帮助行 rejectHelp",
+        "zh.js 与 en.js 加 menu.connections 及 connections.* 块（列头/truncatedHint/empty/sortByStart/sortByDuration/autoRefresh/interval/off/rejectHelp 等），双语同键集",
+        "cd web && npm run build 通过；补回 api/dist/.gitkeep"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "测试与最终验证",
+      "priority": 6,
+      "passes": true,
+      "acceptanceCriteria": [
+        "connreg/registry_test.go：并发(N goroutine Register/SetUpstream/SetAction/Deregister 于 -race，终态 Len()==0)；截断/序(M>limit，start 最新优先/duration 最长优先，total==M，truncated)；tied-start 确定性双模式(start 与 duration 相等 Start 下稳定 seq 序)；边界 N=limit+1",
+        "connreg BenchmarkSnapshot N=50k + testing.AllocsPerOp 上限断言证 O(K) 不随 N 增长",
+        "server 测试：never-reject 双路径——Allow 阶段 reject 与嗅探阶段 reject 均不在活跃快照、且绝无 action=reject 条目",
+        "api/connections_handler_test.go：httptest 注入登记表，GET /api/connections?limit=2&sort=duration 断言形态+序",
+        "make build 通过",
+        "go test ./... -race 全绿",
+        "i18n zh/en 键对齐校验通过",
+        "git diff server/relay.go 无改动（splice 路径保留）"
+      ]
+    }
+  ]
+}
