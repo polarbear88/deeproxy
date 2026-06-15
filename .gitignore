@@ -48,6 +48,8 @@ web/.omc/state/sessions/
 web/src/.omc/state/sessions/
 web/.omc/state
 web/src/.omc/state
+# 任意层级的 .omc/state 都属于会话级运行时产物（hook 在 cwd 子目录散落生成），全局忽略
+**/.omc/state/
 
 # ===== 前端（web/）=====
 # 依赖与构建缓存不入库

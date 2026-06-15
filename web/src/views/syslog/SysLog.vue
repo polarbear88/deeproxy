@@ -263,25 +263,22 @@ onBeforeUnmount(closeStream)
           <el-input
             v-model="auditFilter.user"
             :placeholder="t('syslog.filterUser')"
-            size="small"
             clearable
-            style="width: 150px"
+            style="width: 160px"
             @keyup.enter="searchAudit"
           />
           <el-input
             v-model="auditFilter.target"
             :placeholder="t('syslog.filterTarget')"
-            size="small"
             clearable
-            style="width: 180px"
+            style="width: 200px"
             @keyup.enter="searchAudit"
           />
           <el-select
             v-model="auditFilter.action"
             :placeholder="t('syslog.filterAction')"
-            size="small"
             clearable
-            style="width: 130px"
+            style="width: 150px"
           >
             <el-option :label="t('action.forward')" value="forward" />
             <el-option :label="t('action.direct')" value="direct" />
@@ -290,32 +287,31 @@ onBeforeUnmount(closeStream)
           <el-input
             v-model="auditFilter.group"
             :placeholder="t('syslog.filterGroup')"
-            size="small"
             clearable
-            style="width: 150px"
+            style="width: 160px"
             @keyup.enter="searchAudit"
           />
-          <el-button type="primary" size="small" :icon="'Search'" @click="searchAudit">{{ t('common.search') }}</el-button>
-          <el-button size="small" :icon="'RefreshLeft'" @click="resetAudit">{{ t('common.reset') }}</el-button>
+          <el-button type="primary" :icon="'Search'" @click="searchAudit">{{ t('common.search') }}</el-button>
+          <el-button :icon="'RefreshLeft'" @click="resetAudit">{{ t('common.reset') }}</el-button>
         </div>
 
-        <el-table :data="audit" border size="small" :empty-text="t('syslog.emptyAudit')">
-          <el-table-column :label="t('syslog.colTime')" width="170">
+        <el-table class="audit-table" :data="audit" border :empty-text="t('syslog.emptyAudit')">
+          <el-table-column :label="t('syslog.colTime')" width="180">
             <template #default="{ row }">{{ formatTime(row.time) }}</template>
           </el-table-column>
-          <el-table-column prop="user" :label="t('syslog.colUser')" width="120" />
-          <el-table-column prop="group" :label="t('syslog.colGroup')" width="120" />
+          <el-table-column prop="user" :label="t('syslog.colUser')" width="130" />
+          <el-table-column prop="group" :label="t('syslog.colGroup')" width="130" />
           <el-table-column prop="target" :label="t('syslog.colTarget')" min-width="180" show-overflow-tooltip />
-          <el-table-column :label="t('syslog.colAction')" width="100">
+          <el-table-column :label="t('syslog.colAction')" width="110">
             <template #default="{ row }">
-              <el-tag size="small" :type="actionTag(row.action)" effect="plain">{{ row.action }}</el-tag>
+              <el-tag :type="actionTag(row.action)" effect="plain">{{ row.action }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="upstream" :label="t('syslog.colUpstream')" min-width="150" show-overflow-tooltip />
-          <el-table-column :label="t('syslog.colUp')" width="100">
+          <el-table-column :label="t('syslog.colUp')" width="110">
             <template #default="{ row }">{{ formatBytes(row.upBytes) }}</template>
           </el-table-column>
-          <el-table-column :label="t('syslog.colDown')" width="100">
+          <el-table-column :label="t('syslog.colDown')" width="110">
             <template #default="{ row }">{{ formatBytes(row.downBytes) }}</template>
           </el-table-column>
         </el-table>
@@ -391,5 +387,25 @@ onBeforeUnmount(closeStream)
 .log-empty {
   text-align: center;
   padding: 40px 0;
+}
+
+// ===== 连接审计：筛选条与表格放大 + 间隔 + 分页右对齐 =====
+// 筛选条各控件之间留间距，并与下方表格拉开 16px 间隔（原先紧贴无间隔）。
+.audit-filter {
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+// 审计表格整体放大字号（去掉 size="small" 后默认偏小，这里再提一档到 14px）。
+.audit-table {
+  font-size: 14px;
+  :deep(.el-table__header) th {
+    font-size: 14px;
+  }
+}
+// 分页器靠右对齐，并与表格留出上间距。
+.audit-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 </style>

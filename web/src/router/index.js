@@ -50,6 +50,14 @@ const routes = [
         meta: { title: 'menu.user', icon: 'User' },
       },
       {
+        // 生成代理：选用户+选代理组，按组类型生成可用的本机 SOCKS5 连接串。
+        // 紧跟 user 路由之后，使其在左侧菜单中显示在「用户管理」正下方。
+        path: 'generate-proxy',
+        name: 'generateProxy',
+        component: () => import('@/views/user/GenerateProxy.vue'),
+        meta: { title: 'menu.generateProxy', icon: 'MagicStick' },
+      },
+      {
         path: 'connections',
         name: 'connections',
         component: () => import('@/views/connections/RealtimeConnections.vue'),

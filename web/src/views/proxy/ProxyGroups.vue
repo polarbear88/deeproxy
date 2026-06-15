@@ -464,7 +464,7 @@ onMounted(loadGroups)
           <el-input v-model="groupDialog.form.name" :placeholder="t('proxyGroups.namePlaceholder')" />
         </el-form-item>
         <el-form-item :label="t('proxyGroups.remark')">
-          <el-input v-model="groupDialog.form.remark" :placeholder="t('proxyGroups.optionalRemark')" />
+          <el-input v-model="groupDialog.form.remark" :placeholder="t('common.optionalRemark')" />
         </el-form-item>
         <el-form-item :label="t('proxyGroups.type')">
           <el-radio-group v-model="groupDialog.form.type" :disabled="groupDialog.isEdit">
