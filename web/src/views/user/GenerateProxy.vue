@@ -237,11 +237,11 @@ onMounted(() => {
               <el-input v-model="v.name" :placeholder="t('generateProxy.varNamePlaceholder')" style="width: 200px" />
               <span class="var-sep">_</span>
               <el-input v-model="v.value" :placeholder="t('generateProxy.varValuePlaceholder')" style="width: 200px" />
-              <el-button link type="danger" :icon="'Delete'" @click="removeVariable(idx)" />
+              <el-button link type="danger" @click="removeVariable(idx)"><el-icon><Delete /></el-icon></el-button>
             </div>
           </el-form-item>
           <el-form-item label=" ">
-            <el-button :icon="'Plus'" @click="addVariable">{{ t('generateProxy.addVariable') }}</el-button>
+            <el-button @click="addVariable"><el-icon><Plus /></el-icon>{{ t('generateProxy.addVariable') }}</el-button>
           </el-form-item>
         </template>
       </el-form>
@@ -252,13 +252,13 @@ onMounted(() => {
         <el-form-item :label="t('generateProxy.addr1')">
           <div class="result-row">
             <el-input :model-value="proxyFormat1" readonly :placeholder="t('generateProxy.resultPlaceholder')" />
-            <el-button type="primary" :icon="'CopyDocument'" @click="copyFormat(proxyFormat1)">{{ t('common.copy') }}</el-button>
+            <el-button type="primary" @click="copyFormat(proxyFormat1)"><el-icon><CopyDocument /></el-icon>{{ t('common.copy') }}</el-button>
           </div>
         </el-form-item>
         <el-form-item :label="t('generateProxy.addr2')">
           <div class="result-row">
             <el-input :model-value="proxyFormat2" readonly :placeholder="t('generateProxy.resultPlaceholder')" />
-            <el-button type="primary" :icon="'CopyDocument'" @click="copyFormat(proxyFormat2)">{{ t('common.copy') }}</el-button>
+            <el-button type="primary" @click="copyFormat(proxyFormat2)"><el-icon><CopyDocument /></el-icon>{{ t('common.copy') }}</el-button>
           </div>
         </el-form-item>
       </el-form>

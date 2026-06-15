@@ -247,8 +247,8 @@ onMounted(loadAll)
         <div class="flex-between">
           <span>{{ t('rules.title') }}</span>
           <div>
-            <el-button :icon="'MagicStick'" @click="openTester">{{ t('rules.tester') }}</el-button>
-            <el-button type="primary" :icon="'Plus'" @click="openCreateRg">{{ t('common.add') }}</el-button>
+            <el-button @click="openTester"><el-icon><MagicStick /></el-icon>{{ t('rules.tester') }}</el-button>
+            <el-button type="primary" @click="openCreateRg"><el-icon><Plus /></el-icon>{{ t('common.add') }}</el-button>
           </div>
         </div>
       </template>
@@ -311,11 +311,11 @@ onMounted(loadAll)
       <div class="flex-between drawer-toolbar">
         <span class="text-muted">{{ t('rules.orderHint') }}</span>
         <div class="flex-row" style="gap: 8px">
-          <el-button size="small" :icon="'Download'" @click="exportRules">{{ t('rules.exportRules') }}</el-button>
+          <el-button size="small" @click="exportRules"><el-icon><Download /></el-icon>{{ t('rules.exportRules') }}</el-button>
           <el-upload :show-file-list="false" :before-upload="onImportRules" accept=".json">
-            <el-button size="small" :icon="'Upload'" :loading="importingRules">{{ t('rules.importRules') }}</el-button>
+            <el-button size="small" :loading="importingRules"><el-icon><Upload /></el-icon>{{ t('rules.importRules') }}</el-button>
           </el-upload>
-          <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateRule">{{ t('rules.addRule') }}</el-button>
+          <el-button type="primary" size="small" @click="openCreateRule"><el-icon><Plus /></el-icon>{{ t('rules.addRule') }}</el-button>
         </div>
       </div>
       <el-table :data="ruleDrawer.list" border size="small" :empty-text="t('rules.emptyRules')">

@@ -215,7 +215,7 @@ onMounted(() => {
       <template #header>
         <div class="flex-between">
           <span>{{ t('users.title') }}</span>
-          <el-button type="primary" :icon="'Plus'" @click="openCreate">{{ t('users.create') }}</el-button>
+          <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>{{ t('users.create') }}</el-button>
         </div>
       </template>
 

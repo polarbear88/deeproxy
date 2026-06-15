@@ -426,7 +426,7 @@ onMounted(loadGroups)
       <template #header>
         <div class="flex-between">
           <span>{{ t('proxyGroups.title') }}</span>
-          <el-button type="primary" :icon="'Plus'" @click="openCreateGroup">{{ t('proxyGroups.create') }}</el-button>
+          <el-button type="primary" @click="openCreateGroup"><el-icon><Plus /></el-icon>{{ t('proxyGroups.create') }}</el-button>
         </div>
       </template>
 
@@ -513,7 +513,7 @@ onMounted(loadGroups)
     <el-drawer v-model="upstreamDrawer.visible" :title="t('proxyGroups.poolDrawerTitle', { name: upstreamDrawer.group?.name || '' })" :size="appStore.isMobile ? '90%' : '60%'">
       <div class="drawer-toolbar">
         <span class="text-muted">{{ t('proxyGroups.poolTemplateHint') }}</span>
-        <el-button type="primary" size="small" :icon="'Plus'" @click="openCreateUpstream">{{ t('proxyGroups.addUpstream') }}</el-button>
+        <el-button type="primary" size="small" @click="openCreateUpstream"><el-icon><Plus /></el-icon>{{ t('proxyGroups.addUpstream') }}</el-button>
       </div>
 
       <!-- 筛选栏 -->

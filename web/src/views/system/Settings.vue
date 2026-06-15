@@ -268,9 +268,9 @@ onMounted(loadSettings)
         <el-card class="dp-card-gap full-card">
           <template #header><span>{{ t('settings.importExport') }}</span></template>
           <div class="ie-row">
-            <el-button :icon="'Download'" @click="exportConfig">{{ t('settings.exportConfig') }}</el-button>
+            <el-button @click="exportConfig"><el-icon><Download /></el-icon>{{ t('settings.exportConfig') }}</el-button>
             <el-upload :show-file-list="false" :before-upload="onImportFile" accept=".json">
-              <el-button :icon="'Upload'" :loading="importing">{{ t('settings.importConfig') }}</el-button>
+              <el-button :loading="importing"><el-icon><Upload /></el-icon>{{ t('settings.importConfig') }}</el-button>
             </el-upload>
           </div>
           <el-alert

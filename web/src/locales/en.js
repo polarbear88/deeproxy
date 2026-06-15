@@ -74,6 +74,8 @@ export default {
     // Delete confirm: {name} is object name; use deleteConfirmPlain without a name
     deleteConfirm: 'Delete "{name}"?',
     deleteConfirmPlain: 'Confirm delete?',
+    // Jump to latest: floating button shown in SysLog when user scrolls up while stream is active
+    jumpToLatest: 'Jump to latest',
     // Logout confirmation dialog text (MainLayout.vue ElMessageBox.confirm)
     logoutConfirm: {
       title: 'Notice',

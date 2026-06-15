@@ -1,6 +1,27 @@
 // ECharts 封装组件：统一处理 init/resize/dispose 与暗亮主题切换（DRY）。
 // 用法：<EChart :option="option" height="320px" />
-import * as echarts from 'echarts'
+//
+// 按需引入说明（R4 瘦身）：
+// 全量 import * as echarts from 'echarts' 会把全部 chart/component 打进 bundle（~1MB+）。
+// 改用 echarts/core + use([...]) 仅注册本项目实际用到的图表与组件，大幅减小产物体积。
+// 实测依据（grep Dashboard.vue ProxyGroups.vue）：
+//   - 图表类型：LineChart（折线，Dashboard 流量趋势）、BarChart（柱状，Top 域名）、PieChart（饼图，分组占比）
+//   - 组件：TooltipComponent（悬浮提示）、LegendComponent（图例）、GridComponent（坐标轴网格）
+//   - 渲染器：CanvasRenderer（Canvas 渲染，性能最优，无 SVG 需求）
+// 排除说明（R4）：
+//   - DataZoomComponent：全仓 option 中无 dataZoom 字段，不引入
+//   - TitleComponent：全仓 option 中无 title 字段，不引入
+import * as echarts from 'echarts/core'
+import { LineChart, BarChart, PieChart } from 'echarts/charts'
+import {
+  TooltipComponent,
+  LegendComponent,
+  GridComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+// 注册按需组件：只加载本项目实际使用的图表与组件，避免打包全量 echarts
+echarts.use([LineChart, BarChart, PieChart, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 import { useThemeStore } from '@/stores/theme'
 
 // 自定义暗色主题名（区别于内置 'dark'，便于显式控制背景/文本/轴线配色）。

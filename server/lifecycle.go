@@ -93,9 +93,17 @@ func Listen(network, addr string) (net.Listener, error) {
 	// KeepAlive:-1 显式禁用裸 duration 路径，完全交由 KeepAliveConfig（dialer 包单一事实源）决定；
 	// 周期 30/15/3 = 75s 落在 AC「死连接 ≤90s 清理」窗内（裸 KeepAlive:30s 走默认 15s×9=165s 会超窗）。
 	// context.Background()：监听器生命周期 = 进程级，装配期一次性创建，无需取消语义。
+	//
+	// Control: dialer.ControlTCPUserTimeout —— 给每个 accept 的客户端 TCP 连接加死连接清理上限 90s
+	// （各平台原生实现，详见 dialer.go 的平台真值表注释 / tcpopt_*.go）。
+	// 为何这一层不可少：keepalive 仅在连接【空闲且无未确认数据】时探测；而当服务端正向客户端回发数据、
+	// 发送缓冲里有未确认数据时，内核会抑制 keepalive 探测（不发），此时死客户端无法被 keepalive 检出。
+	// USER_TIMEOUT 正是覆盖这一盲区：连接【有未确认在途数据】90s 仍无 ACK 进展即重置回收。三接入点
+	// （listener / DialDirect / DialUpstream.fwd）共用 dialer.ControlTCPUserTimeout（DRY，权衡见 dialer.go 真值表注释）。
 	lc := net.ListenConfig{
 		KeepAlive:       -1,
 		KeepAliveConfig: dialer.KeepAliveConfig,
+		Control:         dialer.ControlTCPUserTimeout,
 	}
 	l, err := lc.Listen(context.Background(), network, addr)
 	if err != nil {

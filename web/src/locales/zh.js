@@ -77,6 +77,8 @@ export default {
     // 删除确认：{name} 为对象名；不带名字用 deleteConfirmPlain
     deleteConfirm: '确认删除「{name}」？',
     deleteConfirmPlain: '确认删除？',
+    // 跳到最新：系统日志高速流下用户上滑看历史时出现的浮层按钮文案（SysLog.vue）
+    jumpToLatest: '跳到最新',
     // 退出登录确认框文案（MainLayout.vue ElMessageBox.confirm）
     logoutConfirm: {
       title: '提示',

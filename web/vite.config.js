@@ -36,6 +36,19 @@ export default defineConfig({
     // 单二进制场景下不生成 sourcemap，控制体积
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        // 手动拆包：将 vue 生态与 echarts 单独提取为命名 chunk，
+        // 利用浏览器缓存：业务代码迭代时这两个大包不会随之失效（哈希稳定），
+        // 同时也让 index chunk 体积更小、首屏解析更快。
+        manualChunks: {
+          // vue 核心 + 路由 + 状态管理，变动频率极低
+          'vendor-vue': ['vue', 'vue-router', 'pinia'],
+          // echarts 按需包，已用 use() 裁剪（见 EChart.js），单独缓存
+          'vendor-echarts': ['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,
