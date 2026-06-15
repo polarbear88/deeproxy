@@ -142,7 +142,8 @@ async function loadTop() {
 // 与 loadTop 拆开：切换该卡片时间窗时只刷新这一张卡片，不波及分组/用户表。
 async function loadTopDomains() {
   try {
-    const d = await dashApi.getTopN({ kind: 'domain', limit: 10, window: domainWindow.value })
+    // top50：limit 扩大到 50，后端 handleTop 已支持动态 limit，前端同步调大保证数据完整
+    const d = await dashApi.getTopN({ kind: 'domain', limit: 50, window: domainWindow.value })
     topDomains.value = d || []
   } catch {
     topDomains.value = []
@@ -238,22 +239,7 @@ const actionOption = computed(() => {
   }
 })
 
-// Top 目标域名横向柱状图：y 轴为域名类目（inverse 让 Top1 在顶），x 轴为命中次数。
-// 绑定后端 domain 返回的 .count（非 group/user 的 .bytes）。
-const topDomainOption = computed(() => ({
-  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-  grid: { left: 8, right: 24, top: 10, bottom: 10, containLabel: true },
-  xAxis: { type: 'value' },
-  yAxis: { type: 'category', inverse: true, data: topDomains.value.map((d) => d.name) },
-  series: [
-    {
-      type: 'bar',
-      data: topDomains.value.map((d) => d.count),
-      barMaxWidth: 18,
-      itemStyle: { borderRadius: [0, 4, 4, 0] },
-    },
-  ],
-}))
+// topDomainOption 已删除：改为 el-table 列表显示，支持 top50 可滚动浏览，无需 ECharts 图表
 
 onMounted(() => {
   resolvePieBorderColor()
@@ -372,8 +358,14 @@ onActivated(() => {
               </el-radio-group>
             </div>
           </template>
-          <EChart v-if="topDomains.length" :option="topDomainOption" height="240px" />
-          <el-empty v-else :description="t('common.empty')" :image-size="60" />
+          <!-- 改为列表：top50 条目用 el-table 替代 EChart 横向柱状图，与 topGroups/topUsers 写法一致；
+               el-table 自带 empty-text，无需额外 el-empty 分支 -->
+          <el-table :data="topDomains" size="small" :show-header="false" :empty-text="t('common.empty')">
+            <el-table-column prop="name" />
+            <el-table-column align="right" width="100">
+              <template #default="{ row }">{{ row.count }}</template>
+            </el-table-column>
+          </el-table>
         </el-card>
       </el-col>
     </el-row>
@@ -477,7 +469,8 @@ onActivated(() => {
   height: 100%;
 }
 /* TopN 三卡片（流量Top分组 / 流量Top用户 / Top目标域名）等高：
- * 固定卡片 body 高度与 Top 目标域名图表（240px）一致，内容超出时可上下滚动（⑥）。 */
+ * 域名卡片改为 top50 列表，高度 280px + overflow-y:auto 让超出内容可滚动，
+ * 不再固定截断——高度与左侧两个卡片视觉对齐即可。*/
 .topn-row {
   :deep(.el-card__body) {
     height: 280px;

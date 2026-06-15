@@ -9,6 +9,7 @@ package api
 import (
 	"net/http"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -172,7 +173,17 @@ type topItem struct {
 // 降序（topItem.count）。domain 支持可选 ?groupId= 过滤（缺省=全局）。
 func (a *App) handleTop(c *gin.Context) {
 	kind := c.Query("kind")
+	// 前端可通过 ?limit= 动态指定返回条数；默认 10，上限钳制 100 防滥用。
+	// domain 卡片改为 top50 列表后透传 limit:50，group/user 保持原来的 limit:5。
 	limit := 10
+	if lq := c.Query("limit"); lq != "" {
+		if v, err := strconv.Atoi(lq); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
 
 	end := time.Now()
 	dayStart := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())

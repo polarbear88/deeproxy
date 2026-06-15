@@ -21,7 +21,14 @@ import { getServerInfo } from '@/api/system'
 
 const { t } = useI18n()
 
+// loading 仅用于首次加载 serverAddr/socks5Port 时的整卡遮罩。
+// 用户/分组下拉各自使用独立 loading，避免展开时触发整卡闪烁。
+// （根因：该组件在 MainLayout <keep-alive :max="6"> 缓存下，
+//   切走再切回时 onMounted 不重新触发，新增的用户/分组不可见；
+//   改为下拉展开时按需加载来解决此问题。）
 const loading = ref(false)
+const usersLoading = ref(false)
+const groupsLoading = ref(false)
 const users = ref([])
 const groups = ref([])
 
@@ -47,24 +54,34 @@ const selectedGroup = computed(() => groups.value.find((g) => g.id === form.grou
 // 当前组类型：'A' 动态上游 / 'B' 代理池 / null 未选。
 const groupType = computed(() => selectedGroup.value?.type || null)
 
-async function loadAll() {
-  loading.value = true
+// 独立加载用户列表：每次下拉展开时调用，保证新增用户实时可见。
+// keep-alive 缓存导致 onMounted 不重跑，故改为展开时按需拉取。
+async function loadUsers() {
+  usersLoading.value = true
   try {
     users.value = (await userApi.listUsers()) || []
   } catch {
     users.value = []
+  } finally {
+    usersLoading.value = false
   }
+}
+
+// 独立加载分组列表：每次下拉展开时调用，保证新增分组实时可见。
+async function loadGroups() {
+  groupsLoading.value = true
   try {
     groups.value = (await groupApi.listGroups()) || []
   } catch {
     groups.value = []
   } finally {
-    loading.value = false
+    groupsLoading.value = false
   }
 }
 
 // 拉取服务器地址/端口；失败静默降级为占位符（与 Users.vue 一致）。
 async function loadProxyContext() {
+  loading.value = true
   try {
     const info = await getServerInfo()
     if (info) {
@@ -73,6 +90,8 @@ async function loadProxyContext() {
     }
   } catch {
     /* ignore：降级占位符 */
+  } finally {
+    loading.value = false
   }
 }
 
@@ -171,7 +190,10 @@ function copyFormat(text) {
 }
 
 onMounted(() => {
-  loadAll()
+  // keep-alive 下 onMounted 只触发一次，故此处预加载用于首次打开时下拉不为空。
+  // 切走再切回时下拉会通过 @visible-change 按需重新请求，无需担心数据陈旧。
+  loadUsers()
+  loadGroups()
   loadProxyContext()
 })
 </script>
@@ -186,27 +208,31 @@ onMounted(() => {
       </template>
 
       <el-form label-width="120px">
-        <!-- 选择用户 -->
+        <!-- 选择用户：展开时重新拉取，保证 keep-alive 缓存下新增用户实时可见 -->
         <el-form-item :label="t('generateProxy.selectUser')">
           <el-select
             v-model="form.userId"
             filterable
             clearable
+            :loading="usersLoading"
             :placeholder="t('generateProxy.selectUserPlaceholder')"
             style="width: 100%; max-width: 420px"
+            @visible-change="(v) => v && loadUsers()"
           >
             <el-option v-for="u in users" :key="u.id" :label="u.username" :value="u.id" />
           </el-select>
         </el-form-item>
 
-        <!-- 选择代理组 -->
+        <!-- 选择代理组：展开时重新拉取，保证 keep-alive 缓存下新增分组实时可见 -->
         <el-form-item :label="t('generateProxy.selectGroup')">
           <el-select
             v-model="form.groupId"
             filterable
             clearable
+            :loading="groupsLoading"
             :placeholder="t('generateProxy.selectGroupPlaceholder')"
             style="width: 100%; max-width: 420px"
+            @visible-change="(v) => v && loadGroups()"
           >
             <el-option v-for="g in groups" :key="g.id" :value="g.id" :label="`${g.name}（${t('groupType.' + g.type)}）`" />
           </el-select>

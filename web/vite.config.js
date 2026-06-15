@@ -1,9 +1,24 @@
 import { fileURLToPath, URL } from 'node:url'
+import { writeFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+
+// keepDistPlaceholder：构建后在 outDir 重建 .gitkeep 占位文件。
+// 为什么需要：build.emptyOutDir=true 每次构建会清空 ../api/dist，连带删除入库的 .gitkeep；
+// 而该占位文件是 api/static.go 的 //go:embed all:dist 的承重物——全新 clone 未构建前端时，
+// 没有它 go build ./api/... 会因「no matching files」编译失败。closeBundle 在产物写完后重建它，
+// 使 .gitkeep 始终存在，彻底消除「每次 pnpm build 后 git 显示 .gitkeep 被删」的反复问题。
+function keepDistPlaceholder(outDir) {
+  return {
+    name: 'keep-dist-placeholder',
+    closeBundle() {
+      writeFileSync(fileURLToPath(new URL(`${outDir}/.gitkeep`, import.meta.url)), '')
+    },
+  }
+}
 
 // Vite 构建配置：
 // - 产物输出到 ../api/dist，供 Go embed 嵌入单一二进制（计划阶段 9）。
@@ -23,6 +38,8 @@ export default defineConfig({
       resolvers: [ElementPlusResolver()],
       dts: 'src/components.d.ts',
     }),
+    // 构建后重建 ../api/dist/.gitkeep（go:embed 占位，emptyOutDir 会清掉它）
+    keepDistPlaceholder('../api/dist'),
   ],
   resolve: {
     alias: {
