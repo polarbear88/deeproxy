@@ -44,6 +44,10 @@ test_config.yaml
 
 # OMC 会话状态（工具自动生成）
 .omc/sessions/
+web/.omc/state/sessions/
+web/src/.omc/state/sessions/
+web/.omc/state
+web/src/.omc/state
 
 # ===== 前端（web/）=====
 # 依赖与构建缓存不入库

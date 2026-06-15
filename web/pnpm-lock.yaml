@@ -32,6 +32,9 @@ importers:
       vue-router:
         specifier: ^4.5.0
         version: 4.6.4(vue@3.5.38)
+      vue-virtual-scroller:
+        specifier: ^3.0.4
+        version: 3.0.4(vue@3.5.38)
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
@@ -1079,6 +1082,11 @@ packages:
     peerDependencies:
       vue: ^3.5.0
 
+  vue-virtual-scroller@3.0.4:
+    resolution: {integrity: sha512-3qh3c9VUVysuXynaa4fVZ3ncx3VgD7EPRiQcj+jUVZl5u/TTkD3c27XvSEu3JGJfsJt/vVTVziZ3djiiHtW4cQ==}
+    peerDependencies:
+      vue: ^3.3.0
+
   vue@3.5.38:
     resolution: {integrity: sha512-vAMKHfImQlYSy0C+PBue4s3ERZ2xGKfgZg5GXAsLInq1dyh2H78ILVP5sK0KPFPVW4kv+OGCIvBEondcjpZp7A==}
     peerDependencies:
@@ -2005,6 +2013,10 @@ snapshots:
   vue-router@4.6.4(vue@3.5.38):
     dependencies:
       '@vue/devtools-api': 6.6.4
+      vue: 3.5.38
+
+  vue-virtual-scroller@3.0.4(vue@3.5.38):
+    dependencies:
       vue: 3.5.38
 
   vue@3.5.38:

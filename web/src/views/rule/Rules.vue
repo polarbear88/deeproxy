@@ -253,7 +253,7 @@ onMounted(loadAll)
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="ruleGroups" border :empty-text="t('rules.emptyRuleGroups')">
+      <el-table v-loading="loading" :data="ruleGroups" border class="rule-group-table" :empty-text="t('rules.emptyRuleGroups')">
         <el-table-column prop="name" :label="t('rules.rgName')" min-width="160" />
         <el-table-column :label="t('rules.scope')" width="160">
           <template #default="{ row }">
@@ -418,5 +418,13 @@ onMounted(loadAll)
 }
 .test-note {
   margin-top: 12px;
+}
+// 规则管理列表字号放大至 16px（访谈定值）。
+// 为什么用显式 class .rule-group-table 而非 .dp-page :deep(.el-table)：
+// 抽屉明细表位于 el-drawer 内，el-drawer 会 teleport 到 body，scoped 的 .dp-page 选择器根本够不到它；
+// 故正向选中规则组表，而非「收窄以避开明细表」，抽屉表自然保持全局 14px。
+// 为什么用 body + cell 级选择器：EP 样式由运行期按需注入的 chunk 提供，特异度不足会被其覆盖（项目记忆 ep-ondemand-css-specificity）。
+body .rule-group-table :deep(.el-table__cell) {
+  font-size: 16px;
 }
 </style>

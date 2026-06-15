@@ -10,10 +10,13 @@ package api
 import (
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sse"
 	"github.com/gin-gonic/gin"
+
+	"deeproxy/syslog"
 )
 
 // validLogLevels 是允许的日志级别筛选值（空表示全部）。
@@ -93,7 +96,90 @@ func (a *App) handleLogsSSE(c *gin.Context) {
 	})
 }
 
-// handleAuditSnapshot 返回连接审计缓冲快照（AC-36）。
+// 审计分页常量：pageSize 默认 50、上限 200（防一次性拉取过多记录拖垮前端渲染与序列化）。
+const (
+	auditDefaultPageSize = 50
+	auditMaxPageSize     = 200
+)
+
+// auditPage 是审计分页接口的返回结构（前端据此渲染 el-pagination）。
+// total 为「筛选后」的真实条数，使前端分页器页数与筛选结果一致。
+type auditPage struct {
+	Items    []syslog.AuditEntry `json:"items"`    // 当前页记录（已按最新→最旧排序）
+	Total    int                 `json:"total"`    // 筛选后总条数
+	Page     int                 `json:"page"`     // 当前页码（从 1 起）
+	PageSize int                 `json:"pageSize"` // 每页条数
+}
+
+// matchAudit 判定一条审计记录是否命中四维筛选（空参数表示该维不筛）。
+// target 用子串模糊匹配（目标常含端口/子域，模糊更实用）；user/group/action 精确匹配。
+func matchAudit(e syslog.AuditEntry, user, target, action, group string) bool {
+	if user != "" && e.User != user {
+		return false
+	}
+	if group != "" && e.Group != group {
+		return false
+	}
+	if action != "" && e.Action != action {
+		return false
+	}
+	if target != "" && !strings.Contains(e.Target, target) {
+		return false
+	}
+	return true
+}
+
+// clampPaging 把原始 page/pageSize 钳制到安全范围：page 下限 1；pageSize <=0 归默认、上限 200。
+func clampPaging(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = auditDefaultPageSize
+	}
+	if pageSize > auditMaxPageSize {
+		pageSize = auditMaxPageSize
+	}
+	return page, pageSize
+}
+
+// reverseAudit 原地反转切片，把 buffer.snapshot() 的「最旧→最新」翻成「最新→最旧」展示序。
+// 为什么在服务端反转：分页是服务端做的，前端每次只拿一页，无法对全集排序；必须在切片前反转。
+func reverseAudit(s []syslog.AuditEntry) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+}
+
+// handleAuditSnapshot 返回连接审计缓冲快照（AC-36），支持服务端分页 + 四维筛选。
+//
+// 流程：取 ring 全量快照（最旧→最新）→ 四维筛选 → 反转为最新→最旧 → 安全切片分页 →
+// 返回 {items,total,page,pageSize}。全程在内存 ring buffer 上操作，不引入数据库。
 func (a *App) handleAuditSnapshot(c *gin.Context) {
-	respondOK(c, a.audit.Snapshot())
+	// 解析查询参数：page/pageSize 用 atoiDefault（空/非法归默认），四维筛选空串=不筛。
+	page, pageSize := clampPaging(atoiDefault(c.Query("page"), 1), atoiDefault(c.Query("pageSize"), auditDefaultPageSize))
+	user := c.Query("user")
+	target := c.Query("target")
+	action := c.Query("action")
+	group := c.Query("group")
+
+	// 取全量快照后按四维筛选（仅一次线性扫描）。
+	all := a.audit.Snapshot()
+	filtered := make([]syslog.AuditEntry, 0, len(all))
+	for _, e := range all {
+		if matchAudit(e, user, target, action, group) {
+			filtered = append(filtered, e)
+		}
+	}
+
+	// 反转为最新→最旧（稳定展示序）。
+	reverseAudit(filtered)
+
+	// 安全分页切片：start/end 均钳到 [0,total]，start>=total 时 items 为空切片，绝不越界 panic。
+	total := len(filtered)
+	start := min((page-1)*pageSize, total)
+	end := min(start+pageSize, total)
+	items := filtered[start:end]
+
+	respondOK(c, auditPage{Items: items, Total: total, Page: page, PageSize: pageSize})
 }

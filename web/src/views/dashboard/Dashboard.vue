@@ -6,7 +6,7 @@
 // - GET /dashboard/action-dist → [{name,value}]。
 // - GET /dashboard/top?kind=group|user|domain → group/user:[{name,bytes}]、domain:[{name,count}]。
 // - GET /dashboard/runtime → { memMB,goroutines,groups:[{id,name,healthy,total,allDown}] }。
-import { onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
+import { onMounted, onBeforeUnmount, onActivated, onDeactivated, ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import EChart from '@/components/EChart.js'
 import StatCard from '@/components/StatCard.vue'
@@ -67,6 +67,21 @@ watch(
 )
 
 let realtimeTimer = null
+
+// startRealtimeTimer：启动 3s 实时轮询（仅刷新 overview/runtime）。幂等：
+// 若已有定时器则先清掉再建，避免在 onMounted 与 onActivated 都调用时叠加出多个定时器。
+function startRealtimeTimer() {
+  if (realtimeTimer) clearInterval(realtimeTimer)
+  realtimeTimer = setInterval(() => {
+    loadOverview()
+    loadRuntime()
+  }, 3000)
+}
+// stopRealtimeTimer：停止轮询并置空，供 onDeactivated/onBeforeUnmount 复用。
+function stopRealtimeTimer() {
+  if (realtimeTimer) clearInterval(realtimeTimer)
+  realtimeTimer = null
+}
 
 async function loadOverview() {
   try {
@@ -247,13 +262,23 @@ onMounted(() => {
   loadRuntime()
   reloadByWindow()
   loadTopDomains()
-  realtimeTimer = setInterval(() => {
-    loadOverview()
-    loadRuntime()
-  }, 3000)
+  // 注意：实时轮询定时器不在此启动。对 keep-alive 组件，onActivated 在首次挂载后也会触发，
+  // 若这里再 setInterval 一次会与 onActivated 里的 startRealtimeTimer 叠加出双定时器。
+  // 故统一交由 onActivated 启动（startRealtimeTimer 幂等，安全）。
 })
-onBeforeUnmount(() => {
-  if (realtimeTimer) clearInterval(realtimeTimer)
+// keep-alive 缓存导致 onBeforeUnmount 不触发：本视图被 <keep-alive :max="6"> 缓存，
+// 离开页面只「停用」不卸载，若仅靠 onBeforeUnmount 清定时器，3s 轮询会在后台持续触发。
+// 故在 onDeactivated 停表，onActivated 复启。
+onDeactivated(stopRealtimeTimer)
+// 保留 onBeforeUnmount：缓存超过 :max=6 触发 LRU 淘汰时组件真正卸载，此时仍需停掉定时器。
+onBeforeUnmount(stopRealtimeTimer)
+// keep-alive 下切回仪表盘不会重新 mount，故 onMounted 不再触发；
+// 用 onActivated 钩子在每次激活时：① 重拉动作分布，使离开期间产生的新动作及时反映；
+// ② 重启实时轮询定时器，恢复 overview/runtime 的 3s 刷新。
+// 为什么单独拉动作分布：3s 轮询刻意只刷新 overview/runtime，不含动作分布。
+onActivated(() => {
+  loadActionDist()
+  startRealtimeTimer()
 })
 </script>
 

@@ -157,10 +157,19 @@ function buildProxyAddr(row) {
   const pwd = row.pwd || row.password || '<pwd>'
   return `socks5://${row.username}-{group}:${pwd}@${addr}:${port}`
 }
-async function copyProxyAddr(row) {
-  const text = buildProxyAddr(row)
+// 新增格式 addr:port:user-group:pwd（如 192.168.1.1:1080:alice-{group}:pass）。
+// 字段来源与 socks5:// 完全同源、沿用相同缺失占位（<server-addr>/<socks5-port>/<pwd>），
+// {group} 仍为字面占位提示替换为目标代理组名；新增「可选」格式，原 socks5:// 保留不变。
+function buildProxyAddr2(row) {
+  const addr = serverAddr.value || '<server-addr>'
+  const port = socks5Port.value || '<socks5-port>'
+  const pwd = row.pwd || row.password || '<pwd>'
+  return `${addr}:${port}:${row.username}-{group}:${pwd}`
+}
+// copyText：DRY 抽取的剪贴板写入工具，两种复制格式共用，避免重复实现复制逻辑。
+// 优先 Clipboard API；非安全上下文（http）降级到 execCommand。
+async function copyText(text) {
   try {
-    // 优先 Clipboard API；非安全上下文（http）降级到 execCommand。
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text)
     } else {
@@ -178,11 +187,18 @@ async function copyProxyAddr(row) {
     ElMessage.error(t('users.copyFailed'))
   }
 }
+function copyProxyAddr(row) {
+  copyText(buildProxyAddr(row))
+}
+function copyProxyAddr2(row) {
+  copyText(buildProxyAddr2(row))
+}
 
 // 操作列下拉菜单的命令分发：把原先并排的多个按钮收敛为单一下拉入口。
 function onAction(cmd, row) {
   if (cmd === 'auth') openAuth(row)
   else if (cmd === 'copy') copyProxyAddr(row)
+  else if (cmd === 'copy2') copyProxyAddr2(row)
   else if (cmd === 'edit') openEdit(row)
   else if (cmd === 'delete') remove(row)
 }
@@ -223,6 +239,7 @@ onMounted(() => {
                 <el-dropdown-menu>
                   <el-dropdown-item command="auth">{{ t('users.setAuth') }}</el-dropdown-item>
                   <el-dropdown-item command="copy">{{ t('users.copyProxyAddr') }}</el-dropdown-item>
+                  <el-dropdown-item command="copy2">{{ t('users.copyProxyAddr2') }}</el-dropdown-item>
                   <el-dropdown-item command="edit">{{ t('common.edit') }}</el-dropdown-item>
                   <el-dropdown-item command="delete" divided>
                     <span style="color: var(--el-color-danger)">{{ t('common.delete') }}</span>

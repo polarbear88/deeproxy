@@ -46,6 +46,13 @@ type activeConn struct {
 	meta     ConnMeta
 	upstream atomic.Pointer[string] // 后填：实际上游地址；nil 表示未知/直连
 	action   atomic.Pointer[string] // 后填：覆盖 meta.Action（仅嗅探解析出 forward/direct 时）
+	// 后填：嗅探还原出的真实域名，覆盖 meta.Target，使实时列表目标列显示域名而非 IP。
+	// 为什么用 atomic.Pointer 而非改 meta.Target：meta 在 Store 后被 Snapshot 无锁并发读
+	// （文档声明「Store 后不可变、读无需同步」），直接写普通字段会触发 data race；
+	// 故与 upstream/action 一致用 atomic.Pointer，使后填与并发读天然安全，无需逐条 mutex。
+	// 不变量：SetTarget 调用前此指针恒为 nil（Register 绝不初始化为 &""），
+	// toView 在 nil 时回退 meta.Target——即嗅探前显示登记时的原始 IP/host，嗅探成功后才被域名覆盖。
+	target atomic.Pointer[string]
 }
 
 // ConnView 是对外的活跃连接快照视图（喂给 api handler 序列化）。
@@ -99,6 +106,16 @@ func (r *Registry) SetUpstream(id int64, upstream string) {
 func (r *Registry) SetAction(id int64, action string) {
 	if v, ok := r.active.Load(id); ok {
 		v.(*activeConn).action.Store(&action)
+	}
+}
+
+// SetTarget 回填嗅探还原出的真实域名（IP 目标经首包嗅探得到域名后调用）。O(1)。
+// 为什么用 atomic 而非改 meta.Target：meta 在 Store 后被 Snapshot 无锁并发读，
+// 直接写普通字段会触发 data race；故与 upstream/action 一致用 atomic.Pointer。
+// 连接已注销（id 不存在）时静默忽略——竞态下连接可能已结束。
+func (r *Registry) SetTarget(id int64, target string) {
+	if v, ok := r.active.Load(id); ok {
+		v.(*activeConn).target.Store(&target)
 	}
 }
 
@@ -172,9 +189,13 @@ func (ac *activeConn) toView(now time.Time) ConnView {
 	if p := ac.action.Load(); p != nil {
 		action = *p // 嗅探回填的动作覆盖登记时的占位动作
 	}
+	target := ac.meta.Target
+	if p := ac.target.Load(); p != nil {
+		target = *p // 嗅探回填的域名覆盖登记时的原始 IP（指针为 nil 时回退原始值）
+	}
 	return ConnView{
 		ID:          ac.id,
-		Target:      ac.meta.Target,
+		Target:      target,
 		Action:      action,
 		Upstream:    upstream,
 		User:        ac.meta.User,

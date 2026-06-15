@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"runtime/debug"
 	"time"
+
+	"deeproxy/dialer"
 )
 
 // 本文件实现 SOCKS5 服务的【生命周期与健壮性加固】，与核心转发逻辑（server.go）分离：
@@ -81,7 +84,20 @@ func (l deadlineListener) Accept() (net.Conn, error) {
 // cmd 装配阶段用它替代裸 net.Listen，再把返回的 listener 交给 socks5.Server.Serve；
 // 关闭该 listener 即可让 Serve 的 Accept 返回错误从而停止接受新连接（H1 优雅关闭的抓手）。
 func Listen(network, addr string) (net.Listener, error) {
-	l, err := net.Listen(network, addr)
+	// 用 ListenConfig 替代裸 net.Listen，给每个 accept 的客户端 TCP 连接启用 keepalive 检活。
+	//
+	// 为什么必须有（#5 泄漏主修复）：客户端断电时不发 FIN/RST，relay 期间 io.Copy(target, clientR)
+	// 在死客户端读上永久阻塞，goroutine + 上游连接 + 注册表条目永不回收。OS keepalive 探测到
+	// 死连接后令 Read 返错 → io.Copy 返回 → closeBoth + Deregister 清理上游与注册表。
+	//
+	// KeepAlive:-1 显式禁用裸 duration 路径，完全交由 KeepAliveConfig（dialer 包单一事实源）决定；
+	// 周期 30/15/3 = 75s 落在 AC「死连接 ≤90s 清理」窗内（裸 KeepAlive:30s 走默认 15s×9=165s 会超窗）。
+	// context.Background()：监听器生命周期 = 进程级，装配期一次性创建，无需取消语义。
+	lc := net.ListenConfig{
+		KeepAlive:       -1,
+		KeepAliveConfig: dialer.KeepAliveConfig,
+	}
+	l, err := lc.Listen(context.Background(), network, addr)
 	if err != nil {
 		return nil, err
 	}

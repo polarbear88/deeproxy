@@ -421,6 +421,7 @@ export default {
     notAuthed: 'Not authorized',
     setAuth: 'Set Authorized Groups',
     copyProxyAddr: 'Copy Proxy Address',
+    copyProxyAddr2: 'Copy Addr (ip:port:user-group:pwd)',
     // Edit/create dialog
     editUser: 'Edit User',
     createUser: 'New User',
@@ -445,5 +446,21 @@ export default {
     copied: 'Proxy address copied',
     copyFailed: 'Copy failed, please copy manually',
     pwdPlaceholder: 'password',
+  },
+  // System log / connection audit page (#7: audit pagination + 4-dimension filter labels)
+  syslog: {
+    filterUser: 'User',
+    filterTarget: 'Target Host',
+    filterAction: 'Action',
+    filterGroup: 'Group',
+    emptyAudit: 'No audit records',
+    colTime: 'Time',
+    colUser: 'User',
+    colGroup: 'Group',
+    colTarget: 'Target',
+    colAction: 'Action',
+    colUpstream: 'Upstream',
+    colUp: 'Up',
+    colDown: 'Down',
   },
 }

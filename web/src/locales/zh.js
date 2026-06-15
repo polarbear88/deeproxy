@@ -424,6 +424,7 @@ export default {
     notAuthed: '未授权',
     setAuth: '设置授权分组',
     copyProxyAddr: '复制代理地址',
+    copyProxyAddr2: '复制地址(IP:端口:用户-组:密码)',
     // 编辑/新建弹窗
     editUser: '编辑用户',
     createUser: '新建用户',
@@ -448,5 +449,21 @@ export default {
     copied: '代理地址已复制',
     copyFailed: '复制失败，请手动复制',
     pwdPlaceholder: '密码',
+  },
+  // 系统日志 / 连接审计页（#7 新增：审计分页 + 四维筛选文案）
+  syslog: {
+    filterUser: '用户',
+    filterTarget: '目标主机',
+    filterAction: '动作',
+    filterGroup: '分组',
+    emptyAudit: '暂无审计记录',
+    colTime: '时间',
+    colUser: '用户',
+    colGroup: '分组',
+    colTarget: '目标',
+    colAction: '动作',
+    colUpstream: '上游',
+    colUp: '上行',
+    colDown: '下行',
   },
 }

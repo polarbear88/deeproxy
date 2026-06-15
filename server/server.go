@@ -392,6 +392,9 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 	if host, ok := detect.Sniff(first); ok {
 		action, _ = d.group.Engine.MatchRule(host)
 		routeHost = host
+		// 嗅探还原出域名后回填注册表，使实时连接「目标主机」列显示域名而非 IP。
+		// 仅在嗅探成功时一次性调用，O(1)、非热路径（不进入 io.Copy / splice 零拷贝中继）。
+		h.conns.SetTarget(d.connID, host)
 		h.logger.Info("嗅探到域名", "ip", d.host, "domain", host, "action", action)
 	} else {
 		h.logger.Debug("首包未嗅探到域名，走默认动作", "ip", d.host, "action", action)

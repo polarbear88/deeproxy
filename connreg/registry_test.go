@@ -273,3 +273,87 @@ func TestSnapshotAllocationBounded(t *testing.T) {
 		t.Fatalf("Snapshot 分配疑似随 N 增长（非 O(K)）：N=1000→%.0f allocs, N=50000→%.0f allocs", small, large)
 	}
 }
+
+// TestSetTargetNilFallback 验证 #3 不变量：
+// SetTarget 调用前 target 指针恒为 nil，Snapshot 回退展示 meta.Target（登记时的原始 IP/host）；
+// SetTarget 后 Snapshot 展示回填的域名（覆盖原始 IP）。
+func TestSetTargetNilFallback(t *testing.T) {
+	r := New()
+	// Register 只填 meta.Target（原始 IP），不触碰 target 指针，故应回退展示原始值。
+	id := r.Register(ConnMeta{
+		Target: "203.0.113.5", Action: "direct", User: "u", Group: "g", Client: "c",
+		Start: baseTime,
+	})
+
+	items, _, _ := r.Snapshot(DefaultLimit, "start")
+	if len(items) != 1 {
+		t.Fatalf("期望 1 条活跃连接，实际 %d", len(items))
+	}
+	// 不变量：未调 SetTarget 时回退原始 meta.Target。
+	if items[0].Target != "203.0.113.5" {
+		t.Fatalf("SetTarget 前应回退 meta.Target=203.0.113.5，实际 %q", items[0].Target)
+	}
+
+	// 嗅探还原域名后回填，Snapshot 应展示域名覆盖原始 IP。
+	r.SetTarget(id, "example.com")
+	items, _, _ = r.Snapshot(DefaultLimit, "start")
+	if items[0].Target != "example.com" {
+		t.Fatalf("SetTarget 后应覆盖为 example.com，实际 %q", items[0].Target)
+	}
+
+	// SetTarget 对不存在的 id 静默忽略，不 panic。
+	r.SetTarget(999999, "ignored.com")
+}
+
+// TestSetTargetRace 并发跑 SetTarget 与 Snapshot，配合 `go test -race` 验证无数据竞争。
+// 为什么需要：meta.Target 被 Snapshot 无锁并发读，回填若写普通字段会触发 data race；
+// 本用例正是 race detector 的守门测试，证明 atomic.Pointer 回填与并发读安全。
+func TestSetTargetRace(t *testing.T) {
+	r := New()
+	const n = 200
+	ids := make([]int64, n)
+	for i := 0; i < n; i++ {
+		ids[i] = regAt(r, i, "direct")
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// 写方：持续对所有连接回填域名（模拟嗅探成功）。
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				for _, id := range ids {
+					r.SetTarget(id, fmt.Sprintf("host-%d-%d.example.com", w, id))
+				}
+			}
+		}(w)
+	}
+
+	// 读方：持续 Snapshot（toView 会并发读 target 指针）。
+	for rdr := 0; rdr < 4; rdr++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, _, _ = r.Snapshot(DefaultLimit, "start")
+			}
+		}()
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	wg.Wait()
+}
