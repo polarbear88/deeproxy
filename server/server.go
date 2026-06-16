@@ -400,6 +400,14 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 		h.logger.Debug("首包未嗅探到域名，走默认动作", "ip", d.host, "action", action)
 	}
 
+	// 审计/展示用嗅探后的目标地址：嗅出域名则记域名（与实时连接 SetTarget 回填保持一致），
+	// 否则仍记原始 IP。注意拨号目标 target 始终保持客户端原始地址（IP），
+	// 不能用域名重拨，以免上游把域名重解析到与客户端不同的 IP。
+	auditTarget := target
+	if routeHost != d.host {
+		auditTarget = net.JoinHostPort(routeHost, strconv.Itoa(req.DestAddr.Port))
+	}
+
 	if action == rule.ActionReject {
 		// 已回过 success，无法再回 0x02；只能关闭连接。
 		h.counter.IncRejectRule()
@@ -414,7 +422,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 	upConn, usedUpstream, err := h.dialWithFailover(ctx, d, target)
 	if err != nil {
 		h.logger.Warn("嗅探后拨号失败", "host", routeHost, "action", action, "err", err)
-		h.recordAudit(d, target, usedUpstream, 0, 0)
+		h.recordAudit(d, auditTarget, usedUpstream, 0, 0)
 		return err
 	}
 	defer upConn.Close()
@@ -435,7 +443,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 	// 首包字节也计入上行。
 	up += int64(len(first))
 	h.recordTraffic(d, up, down)
-	h.recordAudit(d, target, usedUpstream, up, down)
+	h.recordAudit(d, auditTarget, usedUpstream, up, down)
 	return relErr
 }
 
