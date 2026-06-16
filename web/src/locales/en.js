@@ -412,6 +412,8 @@ export default {
     off: 'Off',
     // Rejected connections note (rejected conns are not in the active list)
     rejectHelp: 'Rejected connections are not shown here. Check the System Log page for audit records.',
+    // Always-on limit note: shown regardless of truncation, so users know the 500 cap
+    limitHint: 'At most 500 active connections are shown; beyond that only the newest 500 are listed — see the truncation hint for the real total.',
   },
   // Users page text (component ⑦, full AC-2.5)
   users: {

@@ -137,6 +137,8 @@ function actionTagType(action) {
     <!-- 拒绝连接说明：引导用户到系统日志查看审计记录 -->
     <div class="reject-help">
       <el-text type="info" size="small">{{ t('connections.rejectHelp') }}</el-text>
+      <!-- 常驻上限说明：无论是否截断都显示，告知用户最多展示 500 条 -->
+      <el-text type="info" size="small">{{ t('connections.limitHint') }}</el-text>
     </div>
 
     <!-- 活跃连接表格 -->
@@ -245,5 +247,9 @@ function actionTagType(action) {
 .reject-help {
   margin-bottom: 8px;
   padding: 0 2px;
+  /* 两条说明文案（rejectHelp / limitHint）竖排，避免行内挤在一起 */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 </style>
