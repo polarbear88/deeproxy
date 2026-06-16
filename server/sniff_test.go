@@ -231,3 +231,111 @@ func TestSniff_IPCIDRPrecedence(t *testing.T) {
 		t.Fatalf("ip-cidr direct 不应经过上游，计数=%d", fu.count.Load())
 	}
 }
+
+// writeInChunks 把 data 切成 parts 段，段间留 gap 间隔分别写出，
+// 模拟「应用层消息被拆成多个 TCP 段」的真实网络行为（每次 Write→对端一次 Read）。
+// gap 之和需远小于 sniffTimeout(测试环境 300ms)，否则会触发嗅探超时。
+func writeInChunks(t *testing.T, conn net.Conn, data []byte, parts int, gap time.Duration) {
+	t.Helper()
+	if parts < 1 {
+		parts = 1
+	}
+	step := (len(data) + parts - 1) / parts // 向上取整，保证覆盖全部字节
+	for i := 0; i < len(data); i += step {
+		end := i + step
+		if end > len(data) {
+			end = len(data)
+		}
+		if _, err := conn.Write(data[i:end]); err != nil {
+			t.Fatalf("分段写第 [%d:%d] 失败: %v", i, end, err)
+		}
+		if end < len(data) {
+			time.Sleep(gap) // 制造段边界：让对端先 Read 到前半段，再收到后半段
+		}
+	}
+}
+
+// TestSniff_SNI_Forward_SplitTwoSegments 回归 Critical 缺陷：
+// TLS ClientHello 被拆成 2 个 TCP 段到达时，循环读必须把记录读全再嗅探 SNI，
+// 否则旧实现只读首段会因记录不完整而嗅探失败、回退默认动作。
+func TestSniff_SNI_Forward_SplitTwoSegments(t *testing.T) {
+	env, fu, user := sniffEnv(t,
+		[]store.Rule{{Match: "domain-suffix:fwd.test", Action: "forward"}},
+		"reject") // 默认 reject：只有「嗅探成功 → 命中 forward」才会走上游，否则连接被拒
+
+	rep, conn := socks5Connect(t, env.addr, user, "secret", 0x01, atypIPv4, "1.2.3.4", 443)
+	if rep != 0x00 {
+		t.Fatalf("嗅探路径应先回 success(0x00)，实际 0x%02x", rep)
+	}
+	hello := makeClientHello(t, "fwd.test")
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	writeInChunks(t, conn, hello, 2, 20*time.Millisecond) // 拆 2 段
+
+	got := make([]byte, len(hello))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("读回显失败(拆段后嗅探失败→默认 reject 导致链路不通?): %v", err)
+	}
+	if string(got) != string(hello) {
+		t.Fatal("回显与发送首包不一致，回放/中继有误")
+	}
+	if fu.count.Load() != 1 {
+		t.Fatalf("上游计数=%d 期望 1（拆段 ClientHello 应仍嗅出 fwd.test 并 forward）", fu.count.Load())
+	}
+}
+
+// TestSniff_SNI_Forward_ManySegments 进一步压测循环读的累积/顺序：
+// ClientHello 拆成 5 个小段到达，断言仍能嗅出 SNI 且首包按序完整回放。
+func TestSniff_SNI_Forward_ManySegments(t *testing.T) {
+	env, fu, user := sniffEnv(t,
+		[]store.Rule{{Match: "domain-suffix:fwd.test", Action: "forward"}},
+		"reject")
+
+	rep, conn := socks5Connect(t, env.addr, user, "secret", 0x01, atypIPv4, "1.2.3.4", 443)
+	if rep != 0x00 {
+		t.Fatalf("嗅探路径应先回 success(0x00)，实际 0x%02x", rep)
+	}
+	hello := makeClientHello(t, "fwd.test")
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	writeInChunks(t, conn, hello, 5, 15*time.Millisecond) // 拆 5 段，间隔合计 ~60ms < 300ms 预算
+
+	got := make([]byte, len(hello))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("读回显失败: %v", err)
+	}
+	if string(got) != string(hello) {
+		t.Fatal("多段回显与发送首包不一致，累积/顺序有误")
+	}
+	if fu.count.Load() != 1 {
+		t.Fatalf("上游计数=%d 期望 1（5 段 ClientHello 应仍嗅出域名并 forward）", fu.count.Load())
+	}
+}
+
+// TestSniff_HTTPHost_Forward_Split 回归碎片化 HTTP：
+// 请求被拆成「方法名未发全(GE)」+ 剩余两段，循环读必须靠 couldBecomeHTTP 继续等而非误判非 HTTP，
+// 直到请求头 CRLFCRLF 收全才嗅出 Host 并命中 forward。
+func TestSniff_HTTPHost_Forward_Split(t *testing.T) {
+	env, fu, user := sniffEnv(t,
+		[]store.Rule{{Match: "domain-suffix:h.test", Action: "forward"}},
+		"reject")
+
+	rep, conn := socks5Connect(t, env.addr, user, "secret", 0x01, atypIPv4, "5.6.7.8", 80)
+	if rep != 0x00 {
+		t.Fatalf("期望 success(0x00)，实际 0x%02x", rep)
+	}
+	req := []byte("GET / HTTP/1.1\r\nHost: h.test\r\nConnection: close\r\n\r\n")
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	// 故意让首段只含 "GE"（方法名未发全），其余分两段；验证不会被误判为非 HTTP 提前收手。
+	if _, err := conn.Write(req[:2]); err != nil {
+		t.Fatalf("写首段失败: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	writeInChunks(t, conn, req[2:], 2, 20*time.Millisecond)
+
+	got := make([]byte, len(req))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		t.Fatalf("读回显失败(碎片 HTTP 嗅探失败→默认 reject?): %v", err)
+	}
+	if fu.count.Load() != 1 {
+		t.Fatalf("上游计数=%d 期望 1（碎片 HTTP 应仍嗅出 h.test 并 forward）", fu.count.Load())
+	}
+}

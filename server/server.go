@@ -521,18 +521,13 @@ func dialReplyCode(err error) byte {
 // 兜底：若底层 writer 拿不到 net.Conn（理论上不会发生，仅为健壮性），退化为 AfterFunc 强制 Close，
 // 保证超时后阻塞的 Read 一定能被唤醒、连接一定被关闭，绝不泄漏。
 func (h *handler) peekFirstPacket(underlying io.Writer, r io.Reader, sniffTimeout time.Duration) []byte {
-	buf := make([]byte, 4096)
-
 	if conn, ok := underlying.(net.Conn); ok {
 		// 首选：对真实连接设硬读超时；读完（无论成败）清除，不影响后续双向中继的读写。
+		// 该 deadline 是【绝对时间点】，作为整个循环读的总预算：循环里多次 Read 共享同一截止时间，
+		// 到点后下一次 Read 立刻超时返回 err，循环随即结束——既能跨段读全 ClientHello，又不会被慢速/半开连接拖死。
 		_ = conn.SetReadDeadline(time.Now().Add(sniffTimeout))
 		defer conn.SetReadDeadline(time.Time{})
-
-		n, err := r.Read(buf)
-		if n <= 0 || (err != nil && n == 0) {
-			return nil
-		}
-		return buf[:n]
+		return readFirstPacket(r)
 	}
 
 	// 兜底：无法拿到底层 conn 时，用定时器到点强制关闭连接，避免 Read 永久阻塞导致泄漏。
@@ -542,11 +537,40 @@ func (h *handler) peekFirstPacket(underlying io.Writer, r io.Reader, sniffTimeou
 		timer := time.AfterFunc(sniffTimeout, func() { _ = c.Close() })
 		defer timer.Stop()
 	}
-	n, err := r.Read(buf)
-	if n <= 0 || (err != nil && n == 0) {
+	return readFirstPacket(r)
+}
+
+// readFirstPacket 在调用方已设置好超时/兜底关闭的前提下，循环累积客户端首包，
+// 直到 detect 判定「读够了」(完整 TLS 记录 / HTTP 头收全 / 非可嗅探协议)、达到上限、或读结束(超时/EOF)。
+// 读到的全部字节按序原样返回，由调用方（handleSniff）回放给上游再开始中继——故绝不丢字节、不乱序。
+//
+// 为什么不用 bufio.Peek（看似更简洁、免回放）：
+//
+//	req.Reader 虽是 *bufio.Reader，但 go-socks5 用默认 4096 大小创建它（bufio.NewReader），
+//	而我们要 Peek 的完整 ClientHello 可能 >4096，bufio.Peek(>缓冲大小) 会直接返回 ErrBufferFull。
+//	除非 fork 依赖改其 reader 构造，否则 Peek 不可用。因此这里手动循环读 + 回放是受依赖库约束下的正确解，
+//	切勿“简化”成 bufio.Peek。
+func readFirstPacket(r io.Reader) []byte {
+	// 上限 = 5 字节记录头 + 最大 TLS 记录体(2^14)，恰好容纳一个最大合法记录，封顶防恶意首包撑爆内存。
+	const maxPeek = 16384 + 5
+	buf := make([]byte, 0, 4096)
+	tmp := make([]byte, 4096)
+	for {
+		n, err := r.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...) // 按读到的顺序累积，保证回放给上游时字节序不变
+			if len(buf) >= maxPeek || detect.FirstPacketComplete(buf) {
+				return buf
+			}
+		}
+		if err != nil { // 超时(deadline 到)/EOF/对端关闭：返回已读到的（可能为 nil）
+			break
+		}
+	}
+	if len(buf) == 0 {
 		return nil
 	}
-	return buf[:n]
+	return buf
 }
 
 // New 用运行期快照、代理池注册表、统计与审计、日志器装配并返回一个 *socks5.Server。
