@@ -114,6 +114,8 @@ async function openUpstreams(group) {
   upQuery.healthState = ''
   selectAllByFilter.value = false
   selectedRows.value = []
+  // 每次打开抽屉重置域名排序为默认「按次数」，避免上一个分组的排序维度串到下一个分组
+  groupDomainSort.value = 'count'
   loadGroupChart(group.id)
   await loadUpstreams()
 }
@@ -351,6 +353,8 @@ const chartDrawer = reactive({ visible: false, group: null })
 function openGroupChart(g) {
   chartDrawer.group = g
   chartDrawer.visible = true
+  // 每次打开图表抽屉重置域名排序为默认「按次数」，避免上一个分组的排序维度串到下一个分组
+  groupDomainSort.value = 'count'
   loadGroupChart(g.id)
 }
 async function loadGroupChart(groupId) {

@@ -160,11 +160,13 @@ func (a *App) handleActionDist(c *gin.Context) {
 	})
 }
 
-// topItem 是排行项；bytes 用于 group/user，count 用于 domain（前端按 kind 取用）。
+// topItem 是排行项；group/user 用 bytes，domain 同时带 count（命中数）与 bytes（总流量）。
+// 字段不加 omitempty：domain 命中已发生但字节尚未随连接关闭落库时 bytes 合法为 0，
+// 显式返回 0 比省略字段更利于前端按 sort 维度直接取用（契约明确）。
 type topItem struct {
 	Name  string `json:"name"`
-	Bytes int64  `json:"bytes,omitempty"`
-	Count int64  `json:"count,omitempty"`
+	Bytes int64  `json:"bytes"`
+	Count int64  `json:"count"`
 }
 
 // handleTop 返回 Top N 排行（kind=group|user|domain，AC-27）。

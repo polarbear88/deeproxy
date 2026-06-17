@@ -355,10 +355,9 @@ export default {
     // 流量图抽屉
     groupTraffic24h: '分组流量（24h）',
     topDomains: 'Top 目标域名',
-    // Top 域名排序切换（命中次数 / 流量）
+    // Top 域名排序切换（命中次数 / 流量）；代理组用柱状图展示流量，无表格列标题，故此处不需要 colTraffic
     sortByCount: '按次数',
     sortByTraffic: '按流量',
-    colTraffic: '流量',
     legendUp: '上行',
     legendDown: '下行',
     legendReq: '请求数',
