@@ -287,7 +287,7 @@ func (h *handler) dialAndRelay(ctx context.Context, writer io.Writer, req *socks
 
 	// 双向中继（纯 io.Copy 热路径）；结束后一次性埋点字节数 + 写审计。
 	up, down, relErr := relayCounted(writer, req.Reader, upConn)
-	h.recordTraffic(d, up, down)
+	h.recordTraffic(d, d.host, up, down)
 	h.recordAudit(d, target, usedUpstream, up, down)
 	return relErr
 }
@@ -442,7 +442,7 @@ func (h *handler) handleSniff(ctx context.Context, writer io.Writer, req *socks5
 	up, down, relErr := relayCounted(writer, req.Reader, upConn)
 	// 首包字节也计入上行。
 	up += int64(len(first))
-	h.recordTraffic(d, up, down)
+	h.recordTraffic(d, routeHost, up, down)
 	h.recordAudit(d, auditTarget, usedUpstream, up, down)
 	return relErr
 }
@@ -457,14 +457,23 @@ func (h *handler) markAction(d decision) {
 	}
 }
 
-// recordTraffic 把本连接累计的上/下行字节一次性埋点到 stats（按 group/user 维度）。
+// recordTraffic 把本连接累计的上/下行字节一次性埋点到 stats（按 group/user 维度），
+// 并把「上+下」总字节累加到该连接目标域名的字节计数（Top 目标域名按字节排序用）。
 // 仅在连接结束后调用一次，不进入字节中继循环（一号硬约束）。
-func (h *handler) recordTraffic(d decision, up, down int64) {
+//
+// host 为本连接最终用于选路/计数的目标主机：dialAndRelay 传 CONNECT 原始目标 d.host；
+// handleSniff 传嗅探还原后的 routeHost，与该路径的 IncDomain 保持同一 key（不丢不重）。
+func (h *handler) recordTraffic(d decision, host string, up, down int64) {
 	if up > 0 {
 		h.counter.AddUp(d.auth.GroupID, d.auth.UserID, up)
 	}
 	if down > 0 {
 		h.counter.AddDown(d.auth.GroupID, d.auth.UserID, down)
+	}
+	// 字节在「连接关闭」时埋点，命中在「连接打开」时埋点——二者错位由 stats 侧
+	// CollectDomainDeltas 的 C1 修复负责兜住（不会因命中闲置先于字节落库而误删 key）。
+	if up+down > 0 {
+		h.counter.AddDomainBytes(host, d.auth.GroupID, up+down)
 	}
 }
 

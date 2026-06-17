@@ -3,7 +3,7 @@
 // 轮询 /api/connections 展示当前所有活跃 SOCKS5 连接，支持按开始时间 / 连接时长排序。
 // 被拒绝的连接在 server 层 Allow 阶段已关闭，结构上不进入活跃注册表，
 // 因此本页动作列仅出现 forward / direct，无需处理 reject。
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getActiveConnections } from '@/api/connections'
 
@@ -52,14 +52,43 @@ watch(sortBy, load)
 // 自动刷新开关或间隔变更时重建定时器
 watch([autoRefresh, intervalSec], restartTimer)
 
+// keep-alive 生命周期说明：
+// 本页被包裹在 <keep-alive :max=6> 中，导航离开时组件不销毁（onBeforeUnmount 不触发），
+// 而是进入"停用"状态（onDeactivated 触发）。若不在此处停定时器，轮询会在后台持续运行，
+// 造成资源浪费和不必要的接口请求。
+//
+// 正确做法：
+//   onActivated   — 首次挂载（onMounted 之后）以及每次从 keep-alive 缓存激活时均触发，
+//                   在此刷新数据并启动定时器，保证回到本页时数据立即更新；
+//   onDeactivated — 导航离开进入缓存时触发，在此停止定时器；
+//   onBeforeUnmount — 组件真正销毁时（超出 keep-alive max 被淘汰）触发，兜底清理。
+//
+// 注意：onActivated 在首次挂载时也会触发（在 onMounted 之后），因此将 load()+restartTimer()
+// 移入 onActivated 即可同时覆盖"首次进入"和"从缓存回来"两种场景，无需在 onMounted 里重复调用。
 onMounted(() => {
+  // 首次挂载时 onActivated 会紧随其后触发，无需在此重复 load()/restartTimer()
+})
+
+// 每次激活（首次挂载后 + 从 keep-alive 缓存恢复）时立即刷新并重启定时器
+onActivated(() => {
   load()
   restartTimer()
 })
 
-// 与 Dashboard.vue 保持一致，使用 onBeforeUnmount 清理定时器，防止内存泄漏
+// 导航离开、组件进入 keep-alive 缓存时停止轮询，避免后台空转
+onDeactivated(() => {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+})
+
+// 组件真正销毁时（被 keep-alive max 淘汰）兜底清理定时器
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
 })
 
 // ── 工具函数 ────────────────────────────────────────────────

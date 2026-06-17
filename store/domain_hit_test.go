@@ -35,7 +35,7 @@ func TestFlushDomainHitsAndQueryTop(t *testing.T) {
 
 	// 全局 Top（groupID<=0 不过滤）：a.com(5) > b.com(1)，降序。
 	s, e := win()
-	top, err := st.QueryTopDomains(s, e, 10, 0)
+	top, err := st.QueryTopDomains(s, e, 10, 0, "count")
 	if err != nil {
 		t.Fatalf("QueryTopDomains 全局失败: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestFlushDomainHitsAndQueryTop(t *testing.T) {
 
 	// limit 生效。
 	s, e = win()
-	top1, _ := st.QueryTopDomains(s, e, 1, 0)
+	top1, _ := st.QueryTopDomains(s, e, 1, 0, "count")
 	if len(top1) != 1 || top1[0].Domain != "a.com" {
 		t.Fatalf("limit=1 应只返回 a.com，得到 %+v", top1)
 	}
@@ -77,7 +77,7 @@ func TestQueryTopDomainsPerGroup(t *testing.T) {
 	s, e := base.Add(-time.Hour), base.Add(time.Hour)
 
 	// 全局：x.com 合并两组 = 7，居首。
-	g, err := st.QueryTopDomains(s, e, 10, 0)
+	g, err := st.QueryTopDomains(s, e, 10, 0, "count")
 	if err != nil {
 		t.Fatalf("全局查询失败: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestQueryTopDomainsPerGroup(t *testing.T) {
 	}
 
 	// 仅 group 1：x.com=2、y.com=1。
-	g1, err := st.QueryTopDomains(s, e, 10, 1)
+	g1, err := st.QueryTopDomains(s, e, 10, 1, "count")
 	if err != nil {
 		t.Fatalf("group1 查询失败: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestQueryTopDomainsPerGroup(t *testing.T) {
 	}
 
 	// 仅 group 2：只有 x.com=5。
-	g2, err := st.QueryTopDomains(s, e, 10, 2)
+	g2, err := st.QueryTopDomains(s, e, 10, 2, "count")
 	if err != nil {
 		t.Fatalf("group2 查询失败: %v", err)
 	}
@@ -134,8 +134,72 @@ func TestCleanupDomainHitsBefore(t *testing.T) {
 	}
 
 	// 清理后大窗口查询应只剩 new.com。
-	all, _ := st.QueryTopDomains(oldBucket.Add(-time.Hour), newBucket.Add(time.Hour), 10, 0)
+	all, _ := st.QueryTopDomains(oldBucket.Add(-time.Hour), newBucket.Add(time.Hour), 10, 0, "count")
 	if len(all) != 1 || all[0].Domain != "new.com" {
 		t.Fatalf("清理后应只剩 new.com，得到 %+v", all)
+	}
+}
+
+// TestDomainBytesAccumulateAndOrderBy 验证 US-004：FlushDomainHits 累加 bytes 列、
+// QueryTopDomains 返回 SUM(bytes) 且 orderBy="bytes" 改变排序维度。
+//
+// 场景设计让「命中维度」与「字节维度」的 Top1 不同，从而真正区分两种排序：
+//   - small.com：命中多(10) 但字节少(100)
+//   - big.com  ：命中少(2)  但字节多(99999)
+// orderBy="count" 时 small.com 居首；orderBy="bytes" 时 big.com 居首。
+func TestDomainBytesAccumulateAndOrderBy(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "domain_bytes.db"))
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	base := time.Date(2026, 6, 13, 12, 0, 0, 0, time.UTC)
+
+	// 第一批写入。
+	if err := st.FlushDomainHits([]DomainDelta{
+		{Domain: "small.com", GroupID: 1, BucketTime: base, HitCount: 6, Bytes: 60},
+		{Domain: "big.com", GroupID: 1, BucketTime: base, HitCount: 1, Bytes: 50000},
+	}); err != nil {
+		t.Fatalf("flush 第一批失败: %v", err)
+	}
+	// 第二批同桶再写，验证 hit_count 与 bytes 均 ON CONFLICT 累加。
+	if err := st.FlushDomainHits([]DomainDelta{
+		{Domain: "small.com", GroupID: 1, BucketTime: base, HitCount: 4, Bytes: 40},
+		{Domain: "big.com", GroupID: 1, BucketTime: base, HitCount: 1, Bytes: 49999},
+	}); err != nil {
+		t.Fatalf("flush 第二批失败: %v", err)
+	}
+
+	s, e := base.Add(-time.Hour), base.Add(time.Hour)
+
+	// orderBy="count"：small.com(命中10) 居首，且其 Bytes 应累加为 100。
+	byCount, err := st.QueryTopDomains(s, e, 10, 0, "count")
+	if err != nil {
+		t.Fatalf("按命中查询失败: %v", err)
+	}
+	if len(byCount) != 2 {
+		t.Fatalf("应有 2 个域名，得到 %+v", byCount)
+	}
+	if byCount[0].Domain != "small.com" || byCount[0].HitCount != 10 || byCount[0].Bytes != 100 {
+		t.Fatalf("按命中 Top1 应为 small.com 命中=10 字节=100，得到 %+v", byCount[0])
+	}
+	if byCount[1].Domain != "big.com" || byCount[1].Bytes != 99999 {
+		t.Fatalf("big.com 字节应累加为 99999，得到 %+v", byCount[1])
+	}
+
+	// orderBy="bytes"：big.com(字节99999) 居首——排序维度切换生效。
+	byBytes, err := st.QueryTopDomains(s, e, 10, 0, "bytes")
+	if err != nil {
+		t.Fatalf("按字节查询失败: %v", err)
+	}
+	if len(byBytes) != 2 || byBytes[0].Domain != "big.com" || byBytes[0].Bytes != 99999 {
+		t.Fatalf("按字节 Top1 应为 big.com 字节=99999，得到 %+v", byBytes)
+	}
+
+	// orderBy="" 兜底等价于 count（small.com 居首）。
+	byDefault, _ := st.QueryTopDomains(s, e, 10, 0, "")
+	if len(byDefault) != 2 || byDefault[0].Domain != "small.com" {
+		t.Fatalf("orderBy 空串应兜底按命中排序（small.com 居首），得到 %+v", byDefault)
 	}
 }

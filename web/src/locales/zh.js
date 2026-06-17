@@ -128,6 +128,10 @@ export default {
     topGroups: '流量 Top 分组',
     topUsers: '流量 Top 用户',
     topDomains: 'Top 目标域名',
+    // Top 域名排序切换（命中次数 / 流量）
+    sortByCount: '按次数',
+    sortByTraffic: '按流量',
+    colTraffic: '流量',
     // 时序图图例/轴
     legendUp: '上行',
     legendDown: '下行',
@@ -351,6 +355,10 @@ export default {
     // 流量图抽屉
     groupTraffic24h: '分组流量（24h）',
     topDomains: 'Top 目标域名',
+    // Top 域名排序切换（命中次数 / 流量）
+    sortByCount: '按次数',
+    sortByTraffic: '按流量',
+    colTraffic: '流量',
     legendUp: '上行',
     legendDown: '下行',
     legendReq: '请求数',

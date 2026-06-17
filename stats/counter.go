@@ -40,12 +40,21 @@ const evictAfterIdleCycles = 3
 
 // domainCounter 是单个 (域名,分组) 的命中计数器。
 //   - hits：自进程启动以来该维度累计命中数（atomic，转发侧无锁累加）。
-//   - lastHits：上次 flush 读到的累计值（仅 flush worker 串行访问，用于差分）。
+//   - bytes：自进程启动以来该维度累计转发字节数（上+下，atomic，转发侧无锁累加）。
+//   - lastHits：上次 flush 读到的累计命中值（仅 flush worker 串行访问，用于差分）。
+//   - lastBytes：上次 flush 读到的累计字节值（仅 flush worker 串行访问，用于差分）。
 //   - idleCycles：连续零增量周期数（仅 flush worker 访问，达阈值触发 eviction）。
+//
+// 为什么命中与字节分别记账并各自留 last 基线：命中在「建连成功(连接打开)」时埋点，
+// 字节在「连接结束(关闭)」时一次性埋点——二者时间错位。对长连接而言，hits 早已落库
+// 并连续若干周期零增量，而尾部字节可能数十秒后连接关闭才到来。必须独立差分、独立判活，
+// 否则会在字节到来前因「命中闲置」误删该 key 而静默丢字节（见 CollectDomainDeltas C1）。
 type domainCounter struct {
-	hits atomic.Int64
+	hits  atomic.Int64
+	bytes atomic.Int64
 
 	lastHits   int64
+	lastBytes  int64
 	idleCycles int
 }
 
@@ -206,6 +215,34 @@ func (c *Counter) IncDomain(host string, groupID int64) {
 		c.domMu.Unlock()
 	}
 	dc.hits.Add(1)
+}
+
+// AddDomainBytes 累加某 (域名,分组) 的转发字节数（连接结束后与 recordTraffic 同位调用一次）。
+//
+// 锁路径与 IncDomain 完全一致（DRY 语义对齐）：host 为空直接返回；快路径读锁取已存在计数器，
+// 仅首次出现该维度时升级写锁创建一次（double-check）；字节累加是 atomic，在锁外执行。
+//
+// 为什么字节也要走 IncDomain 同一套 key 创建逻辑：长连接可能在 hits 那侧的 key 已被 eviction
+// 回收后才结束（关闭时才有字节），此时需以全新 domainCounter（lastBytes=0）重建该 key，
+// 让本周期差分把这批字节当作新增量正常落库，不丢不重。
+func (c *Counter) AddDomainBytes(host string, groupID int64, n int64) {
+	if host == "" {
+		return
+	}
+	k := domainKey{domain: host, groupID: groupID}
+
+	c.domMu.RLock()
+	dc := c.domains[k]
+	c.domMu.RUnlock()
+	if dc == nil {
+		c.domMu.Lock()
+		if dc = c.domains[k]; dc == nil {
+			dc = &domainCounter{}
+			c.domains[k] = dc
+		}
+		c.domMu.Unlock()
+	}
+	dc.bytes.Add(n)
 }
 
 // ConnOpened 在建连成功时调用：活跃连接 +1。
@@ -377,10 +414,13 @@ func (c *Counter) CollectDeltas() []DimSnapshot {
 }
 
 // DomainSnapshot 是某 (域名,分组) 本周期命中增量（flush 内部用）。
+//   - HitCount：本周期命中数增量（建连侧）。
+//   - Bytes：本周期转发字节数增量（连接关闭侧；可在命中增量为 0 的周期单独到来）。
 type DomainSnapshot struct {
 	Domain   string
 	GroupID  int64
 	HitCount int64
+	Bytes    int64
 }
 
 // CollectDomainDeltas 遍历所有域名维度求差返回本周期非零增量并推进基线，
@@ -389,7 +429,7 @@ type DomainSnapshot struct {
 //
 // 流程：
 //  1. 持读锁复制键/指针快照，缩短持锁时间（之后对各 domainCounter 的 atomic 读不需 map 锁）。
-//  2. 逐个差分：d>0 计入输出并清零 idleCycles；d==0 累加 idleCycles。
+//  2. 逐个差分：命中或字节任一增量非零即计入输出并清零 idleCycles；两者皆零才累加 idleCycles。
 //  3. eviction：对 idleCycles 达阈值的 key，持写锁统一 delete；删前 double-check
 //     hits.Load()==lastHits，确保「该 key 累计命中已全部落库」才丢弃（不等则不删、归零计数）。
 //
@@ -411,17 +451,27 @@ func (c *Counter) CollectDomainDeltas() []DomainSnapshot {
 	var evict []domainKey // 待回收的闲置 key
 	for i, dc := range ptrs {
 		h := dc.hits.Load()
-		d := h - dc.lastHits
-		dc.lastHits = h // 推进基线（仅本 goroutine 写）
+		hd := h - dc.lastHits
+		dc.lastHits = h // 推进命中基线（仅本 goroutine 写）
 
-		if d > 0 {
-			dc.idleCycles = 0
+		b := dc.bytes.Load()
+		bd := b - dc.lastBytes
+		dc.lastBytes = b // 推进字节基线（与命中基线对齐推进，仅本 goroutine 写）
+
+		// 关键：只要命中或字节任一有增量就 EMIT 并判活。
+		// C1 根因：命中在「连接打开」埋点、字节在「连接关闭」埋点，二者时间错位；
+		// 长连接的 hits 早已落库并连续零增量，尾部字节却可能数十秒后才到。旧逻辑仅看
+		// hd>0，会在字节到来前把这条 key 当「闲置」回收，导致这批字节静默丢失。
+		if hd > 0 || bd != 0 {
+			dc.idleCycles = 0 // 任一维度有活动即视为活跃，清零闲置计数
 			out = append(out, DomainSnapshot{
 				Domain:   keys[i].domain,
 				GroupID:  keys[i].groupID,
-				HitCount: d,
+				HitCount: hd,
+				Bytes:    bd,
 			})
 		} else {
+			// 命中与字节同时零增量才算真正闲置。
 			dc.idleCycles++
 			if dc.idleCycles >= evictAfterIdleCycles {
 				evict = append(evict, keys[i])
@@ -429,7 +479,7 @@ func (c *Counter) CollectDomainDeltas() []DomainSnapshot {
 		}
 	}
 
-	// eviction：持写锁统一回收闲置 key，删前再次确认无新命中（防删除窗口内的命中丢失）。
+	// eviction：持写锁统一回收闲置 key，删前再次确认无新命中【且无新字节】（防删除窗口内的增量丢失）。
 	if len(evict) > 0 {
 		c.domMu.Lock()
 		for _, k := range evict {
@@ -437,10 +487,13 @@ func (c *Counter) CollectDomainDeltas() []DomainSnapshot {
 			if dc == nil {
 				continue
 			}
-			if dc.hits.Load() == dc.lastHits {
+			// C1 安全闸门：命中与字节基线都已追平才允许删除。
+			// 缺少 bytes 条件时，会删掉一条「命中已闲置、但尾部字节尚未 flush」的长连接 key，
+			// 造成关闭时的字节落到孤儿计数器上被丢弃；故两个维度都必须追平。
+			if dc.hits.Load() == dc.lastHits && dc.bytes.Load() == dc.lastBytes {
 				delete(c.domains, k)
 			} else {
-				// 删除窗口内又有新命中：不删，归零闲置计数，下个周期正常差分。
+				// 删除窗口内又有新命中/新字节：不删，归零闲置计数，下个周期正常差分。
 				dc.idleCycles = 0
 			}
 		}

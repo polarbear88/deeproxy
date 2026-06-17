@@ -3,7 +3,7 @@
 // - RuleGroup: { id,name,scope,groupIds,groups:[{id,name}],ruleCount }；应用到分组用 setRuleGroupGroups。
 // - Rule: { id,match,action,order }。
 // - 测试器 /rule-groups/test {target,groupId} → {action,matchedRule,fromGroup,matched,sniffNote}。
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onActivated, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as ruleApi from '@/api/rule'
@@ -242,6 +242,13 @@ function matchLabel(match) {
 }
 
 onMounted(loadAll)
+
+// keep-alive 下首次进入 onMounted+onActivated 都触发，用 activatedOnce 守卫跳过首帧，之后每次切回刷新
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) { activatedOnce = true; return }
+  loadAll()
+})
 </script>
 
 <template>

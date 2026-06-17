@@ -178,3 +178,58 @@ func TestSystemSettingNewFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("probe_pool_size 往返失败: %d", got.ProbePoolSize)
 	}
 }
+
+// TestMigrateDomainHitBytesIdempotent 验证 US-004：旧 domain_hit 表（仅 hit_count、无 bytes）
+// 经 migrateColumns 补 bytes 列，二次迁移幂等不报 duplicate column；既有行 bytes 默认 0。
+func TestMigrateDomainHitBytesIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old_domain.db")
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("打开旧库失败: %v", err)
+	}
+	// 手建「旧版」domain_hit（无 bytes 列），并插一行历史数据。
+	oldSchema := []string{
+		`CREATE TABLE domain_hit (
+			domain      TEXT    NOT NULL,
+			group_id    INTEGER NOT NULL,
+			bucket_time TEXT    NOT NULL,
+			hit_count   INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (domain, group_id, bucket_time)
+		);`,
+		`INSERT INTO domain_hit (domain, group_id, bucket_time, hit_count)
+			VALUES ('legacy.com', 1, '2026-06-13 12', 5);`,
+	}
+	for _, stmt := range oldSchema {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("建旧库失败: %v\nSQL=%s", err, stmt)
+		}
+	}
+
+	// 首次迁移补 bytes 列；二次迁移必须幂等（columnExists 守卫）。
+	if err := migrateColumns(db); err != nil {
+		t.Fatalf("首次迁移失败: %v", err)
+	}
+	if err := migrateColumns(db); err != nil {
+		t.Fatalf("二次迁移应幂等，却报错: %v", err)
+	}
+
+	ok, err := columnExists(db, "domain_hit", "bytes")
+	if err != nil {
+		t.Fatalf("检查 domain_hit.bytes 失败: %v", err)
+	}
+	if !ok {
+		t.Fatal("迁移后 domain_hit.bytes 仍不存在")
+	}
+
+	// 既有行 bytes 应取默认 0（ADD COLUMN ... DEFAULT 0 对历史行生效）。
+	var b int64
+	if err := db.QueryRow(`SELECT bytes FROM domain_hit WHERE domain='legacy.com'`).Scan(&b); err != nil {
+		t.Fatalf("读旧行 bytes 失败: %v", err)
+	}
+	if b != 0 {
+		t.Fatalf("旧行 bytes 默认应为 0，得到 %d", b)
+	}
+	_ = db.Close()
+}

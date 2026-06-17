@@ -50,6 +50,10 @@ var pendingColumnMigrations = []columnMigration{
 	// system_setting.probe_pool_size：健康检查全局协程池大小（DEC-C1，默认 150）。
 	{table: "system_setting", column: "probe_pool_size",
 		ddl: `ALTER TABLE system_setting ADD COLUMN probe_pool_size INTEGER NOT NULL DEFAULT 150`},
+	// domain_hit.bytes：Top 目标域名的「每域名转发字节」累计列（US-004）。
+	// 旧库（仅 hit_count）补此列；DEFAULT 0 让既有行字节为 0，新桶 upsert 起累加。
+	{table: "domain_hit", column: "bytes",
+		ddl: `ALTER TABLE domain_hit ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0`},
 }
 
 // migrateColumns 逐条幂等地为旧库补齐新增列。
@@ -57,6 +61,16 @@ var pendingColumnMigrations = []columnMigration{
 // 在单写协程内执行（由 migrate 调用），与运行期写串行，无并发问题。
 func migrateColumns(db *sql.DB) error {
 	for _, m := range pendingColumnMigrations {
+		// 目标表不存在则跳过该列迁移：生产 migrate() 已先跑全部 CREATE TABLE IF NOT EXISTS，
+		// 故此处恒为真；仅在「只手建了部分表」的隔离单测里会出现缺表，跳过即可，
+		// 避免对不存在的表 ALTER 报「no such table」。逐列独立、互不阻塞（保持原语义）。
+		ok, err := tableExists(db, m.table)
+		if err != nil {
+			return fmt.Errorf("检查表 %s 是否存在失败: %w", m.table, err)
+		}
+		if !ok {
+			continue
+		}
 		exists, err := columnExists(db, m.table, m.column)
 		if err != nil {
 			return fmt.Errorf("检查列 %s.%s 是否存在失败: %w", m.table, m.column, err)
@@ -69,6 +83,21 @@ func migrateColumns(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// tableExists 通过 sqlite_master 判断指定表是否存在（迁移前的防御性守卫）。
+func tableExists(db *sql.DB, table string) (bool, error) {
+	var name string
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table,
+	).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("查询表是否存在失败: %w", err)
+	}
+	return true, nil
 }
 
 // columnExists 通过 PRAGMA table_info 判断指定表是否已含某列。
@@ -250,6 +279,7 @@ var schemaStmts = []string{
 		group_id    INTEGER NOT NULL,
 		bucket_time TEXT    NOT NULL,
 		hit_count   INTEGER NOT NULL DEFAULT 0,
+		bytes       INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (domain, group_id, bucket_time)
 	);`,
 	// 按时间的辅助索引：保留期清理与时间窗口 Top 聚合查询走它（与 idx_stat_bucket 同理）。

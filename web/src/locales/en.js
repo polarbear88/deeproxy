@@ -125,6 +125,10 @@ export default {
     topGroups: 'Top Groups by Traffic',
     topUsers: 'Top Users by Traffic',
     topDomains: 'Top Target Domains',
+    // Top domain sort toggle (by hit count / by traffic)
+    sortByCount: 'By count',
+    sortByTraffic: 'By traffic',
+    colTraffic: 'Traffic',
     // Timeline legend/axis
     legendUp: 'Upload',
     legendDown: 'Download',
@@ -348,6 +352,10 @@ export default {
     // Traffic chart drawer
     groupTraffic24h: 'Group Traffic (24h)',
     topDomains: 'Top Target Domains',
+    // Top domain sort toggle (by hit count / by traffic)
+    sortByCount: 'By count',
+    sortByTraffic: 'By traffic',
+    colTraffic: 'Traffic',
     legendUp: 'Upload',
     legendDown: 'Download',
     legendReq: 'Requests',

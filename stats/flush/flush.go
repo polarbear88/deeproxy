@@ -147,6 +147,7 @@ func (f *Flusher) flushOnce() {
 				GroupID:    d.GroupID,
 				BucketTime: bucket,
 				HitCount:   d.HitCount,
+				Bytes:      d.Bytes, // 每域名字节增量随命中增量一同落库（缺此行则字节永不入库）
 			})
 		}
 		if err := f.store.FlushDomainHits(dd); err != nil {

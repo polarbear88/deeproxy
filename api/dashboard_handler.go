@@ -248,14 +248,16 @@ func (a *App) handleTop(c *gin.Context) {
 		// 与 group/user 的「今日 dayStart→now」不同，domain 用「now-dur→now」滚动窗，
 		// 这样 7d 能跨自然日聚合命中（缺省/非法值兜底 24h，避免对该卡片报 400）。
 		domainStart := end.Add(-parseTopDomainWindow(c))
-		tops, err := a.store.QueryTopDomains(domainStart, end, limit, groupID)
+		// 可选 ?sort=count|bytes：排序维度（默认 count=命中数）。仅白名单两值，
+		// 经 QueryTopDomains 内部映射为受控列表达式，绝不把原始参数拼进 SQL。
+		tops, err := a.store.QueryTopDomains(domainStart, end, limit, groupID, parseTopDomainSort(c))
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, "读取 Top 域名失败: "+err.Error())
 			return
 		}
 		out := make([]topItem, 0, len(tops))
 		for _, t := range tops {
-			out = append(out, topItem{Name: t.Domain, Count: t.HitCount})
+			out = append(out, topItem{Name: t.Domain, Count: t.HitCount, Bytes: t.Bytes})
 		}
 		respondOK(c, out)
 	default:
@@ -333,4 +335,15 @@ func parseTopDomainWindow(c *gin.Context) time.Duration {
 	default:
 		return 24 * time.Hour // 缺省/非法 → 默认 24h
 	}
+}
+
+// parseTopDomainSort 解析 Top 目标域名卡片的排序维度，仅接受 count / bytes，默认 count。
+//
+// 与 parseTopDomainWindow 同理：常驻卡片宁可降级到默认值也不报 400。返回的字符串只会是
+// "count" 或 "bytes"，由 store.QueryTopDomains 再做一次白名单映射到受控列表达式（双保险防注入）。
+func parseTopDomainSort(c *gin.Context) string {
+	if c.Query("sort") == "bytes" {
+		return "bytes"
+	}
+	return "count" // 缺省/非法/"count" → 按命中数排序
 }

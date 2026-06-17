@@ -4,7 +4,7 @@
 // - 授权与编辑彻底分离：编辑弹窗只管 用户名/密码/备注；授权由独立的"设置授权分组"按钮+弹窗承担。
 // - allGroups（授权全部代理组）是独立布尔标志，与 groupIds 精细授权并存，互不清空（后端语义）。
 // 代理用户仅能连 SOCKS5 代理，不能登录后台。
-import { onMounted, reactive, ref, computed } from 'vue'
+import { onMounted, onActivated, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import * as userApi from '@/api/user'
@@ -208,6 +208,13 @@ function onAction(cmd, row) {
 onMounted(() => {
   loadAll()
   loadProxyContext()
+})
+
+// keep-alive 下首次进入 onMounted+onActivated 都触发，用 activatedOnce 守卫跳过首帧，之后每次切回刷新
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) { activatedOnce = true; return }
+  loadAll(); loadProxyContext()
 })
 </script>
 

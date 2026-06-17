@@ -3,7 +3,7 @@
 // - Group: { id,name,remark,type,healthCheck:{enabled,mode,url,intervalSec,failThreshold,recoverThreshold},todayUp,todayDown,todayReq }
 // - Upstream: { id,host,port,user,pwd,weight,enabled,healthState:'healthy'|'unhealthy'|'unknown',latencyMs }
 // - Type A 隐藏代理池与健康检查 UI（G2）。
-import { onMounted, reactive, ref, computed } from 'vue'
+import { onMounted, onActivated, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import EChart from '@/components/EChart.js'
@@ -343,6 +343,8 @@ async function testUpstream(row) {
 // ===== 分组独立流量图 =====
 const groupTs = ref({ times: [], up: [], down: [], req: [] })
 const groupTopDomains = ref([])
+// 该分组 Top 目标域名排序维度：count（命中次数，默认）| bytes（总流量）。
+const groupDomainSort = ref('count')
 // 组件⑤：Type A 动态上游流量图表抽屉（仅含图表，不含上游池表格）。
 // 独立于 upstreamDrawer，复用 loadGroupChart / groupChartOption / groupTopDomainOption。
 const chartDrawer = reactive({ visible: false, group: null })
@@ -360,7 +362,7 @@ async function loadGroupChart(groupId) {
   }
   // 该分组 Top 目标域名（独立 try/catch，互不影响时序图加载）。
   try {
-    groupTopDomains.value = (await dashApi.getTopN({ kind: 'domain', limit: 10, groupId })) || []
+    groupTopDomains.value = (await dashApi.getTopN({ kind: 'domain', limit: 10, groupId, sort: groupDomainSort.value })) || []
   } catch {
     groupTopDomains.value = []
   }
@@ -399,16 +401,28 @@ const groupChartOption = computed(() => ({
   ],
 }))
 
-// 该分组 Top 目标域名横向柱状图（绑定后端 domain 的 .count，与仪表盘全局图同形态）。
+// 该分组 Top 目标域名横向柱状图。
+// 排序维度由 groupDomainSort 控制：count（命中次数）| bytes（总流量，formatBytes 格式化）。
 const groupTopDomainOption = computed(() => ({
-  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  tooltip: {
+    trigger: 'axis',
+    axisPointer: { type: 'shadow' },
+    // bytes 模式下 tooltip 显示可读化流量值，count 模式下直接显示数值。
+    formatter: groupDomainSort.value === 'bytes'
+      ? (params) => `${params[0].name}<br/>${params[0].marker}${formatBytes(params[0].value)}`
+      : undefined,
+  },
   grid: { left: 8, right: 24, top: 10, bottom: 10, containLabel: true },
-  xAxis: { type: 'value' },
+  xAxis: {
+    type: 'value',
+    // bytes 模式下 X 轴刻度同样可读化
+    axisLabel: groupDomainSort.value === 'bytes' ? { formatter: (v) => formatBytes(v) } : {},
+  },
   yAxis: { type: 'category', inverse: true, data: groupTopDomains.value.map((d) => d.name) },
   series: [
     {
       type: 'bar',
-      data: groupTopDomains.value.map((d) => d.count),
+      data: groupTopDomains.value.map((d) => groupDomainSort.value === 'bytes' ? d.bytes : d.count),
       barMaxWidth: 18,
       itemStyle: { borderRadius: [0, 4, 4, 0] },
     },
@@ -422,6 +436,14 @@ function healthTagType(state) {
 }
 
 onMounted(loadGroups)
+
+// keep-alive 下首次进入 onMounted 与 onActivated 都会触发；用 activatedOnce 守卫
+// 跳过首帧（onMounted 已加载），之后每次从其他页切回都刷新分组数据，避免显示旧缓存。
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) { activatedOnce = true; return }
+  loadGroups()
+})
 </script>
 
 <template>
@@ -621,6 +643,13 @@ onMounted(loadGroups)
       <EChart :option="groupChartOption" height="260px" />
 
       <el-divider content-position="left">{{ t('proxyGroups.topDomains') }}</el-divider>
+      <!-- 排序切换：按命中次数 / 按流量；切换后重新请求数据 -->
+      <div style="margin-bottom:8px">
+        <el-radio-group v-model="groupDomainSort" size="small" @change="loadGroupChart(upstreamDrawer.group?.id)">
+          <el-radio-button value="count">{{ t('proxyGroups.sortByCount') }}</el-radio-button>
+          <el-radio-button value="bytes">{{ t('proxyGroups.sortByTraffic') }}</el-radio-button>
+        </el-radio-group>
+      </div>
       <EChart v-if="groupTopDomains.length" :option="groupTopDomainOption" height="260px" />
       <el-empty v-else :description="t('common.empty')" :image-size="50" />
     </el-drawer>
@@ -635,6 +664,13 @@ onMounted(loadGroups)
       <EChart :option="groupChartOption" height="260px" />
 
       <el-divider content-position="left">{{ t('proxyGroups.topDomains') }}</el-divider>
+      <!-- 排序切换：按命中次数 / 按流量；切换后重新请求数据 -->
+      <div style="margin-bottom:8px">
+        <el-radio-group v-model="groupDomainSort" size="small" @change="loadGroupChart(chartDrawer.group?.id)">
+          <el-radio-button value="count">{{ t('proxyGroups.sortByCount') }}</el-radio-button>
+          <el-radio-button value="bytes">{{ t('proxyGroups.sortByTraffic') }}</el-radio-button>
+        </el-radio-group>
+      </div>
       <EChart v-if="groupTopDomains.length" :option="groupTopDomainOption" height="260px" />
       <el-empty v-else :description="t('common.empty')" :image-size="50" />
     </el-drawer>

@@ -101,7 +101,76 @@ func TestDomainEviction(t *testing.T) {
 	}
 }
 
-// TestDomainConcurrentIncAndCollect 并发 IncDomain + flush goroutine CollectDomainDeltas
+// TestDomainBytesSurviveIdleHitsThenFlush 复现并守护 C1：命中在「连接打开」埋点、字节在
+// 「连接关闭」埋点，二者时间错位。模拟长连接——先记一次命中（hits 增量落库后连续多轮零增量
+// 进入闲置临界），随后连接关闭才到来的字节必须仍被 EMIT 出来，且该 key 不得在尾部字节
+// 落库前被 eviction 回收（旧 hits-only 逻辑会误删并静默丢字节）。
+func TestDomainBytesSurviveIdleHitsThenFlush(t *testing.T) {
+	c := NewCounter()
+
+	const host = "longlived.com"
+	const grp int64 = 1
+
+	// 连接打开：记一次命中。首轮 collect 应得命中增量 1、字节 0。
+	c.IncDomain(host, grp)
+	d0 := c.CollectDomainDeltas()
+	if len(d0) != 1 || d0[0].HitCount != 1 || d0[0].Bytes != 0 {
+		t.Fatalf("首轮应为命中=1 字节=0，得到 %+v", d0)
+	}
+
+	// 连接仍在中继：命中侧连续多轮零增量。跑到 eviction 阈值减 1 轮——
+	// 此时该 key 的 idleCycles 已逼近阈值，但还未触发回收（再多一轮零增量才会被删）。
+	for i := 0; i < evictAfterIdleCycles-1; i++ {
+		if d := c.CollectDomainDeltas(); len(d) != 0 {
+			t.Fatalf("闲置周期不应有增量，第 %d 轮得到 %+v", i, d)
+		}
+	}
+
+	// 连接关闭：尾部字节到来。此刻 key 仍应存活（字节差分依赖它）。
+	c.AddDomainBytes(host, grp, 4096)
+
+	d1 := c.CollectDomainDeltas()
+	if len(d1) != 1 {
+		t.Fatalf("尾部字节到来后应 EMIT 1 条增量（C1：不可因命中闲置丢弃），得到 %+v", d1)
+	}
+	if d1[0].Domain != host || d1[0].Bytes != 4096 {
+		t.Fatalf("应为 %s 字节=4096，得到 %+v", host, d1[0])
+	}
+	if d1[0].HitCount != 0 {
+		t.Fatalf("本轮无新命中，HitCount 应为 0，得到 %d", d1[0].HitCount)
+	}
+
+	// 关键断言：携带未 flush 字节期间，key 不得被回收（字节增量已重置 idleCycles）。
+	c.domMu.RLock()
+	_, alive := c.domains[domainKey{domain: host, groupID: grp}]
+	c.domMu.RUnlock()
+	if !alive {
+		t.Fatal("携带过未 flush 字节的 key 被误删——C1 eviction 安全闸门失效")
+	}
+}
+
+// TestDomainBytesEvictionGate 验证字节维度的 eviction 安全闸门：当 lastBytes 尚未追平
+// 累计 bytes 时（即有未 flush 字节），即便命中早已闲置，也绝不删除该 key。
+func TestDomainBytesEvictionGate(t *testing.T) {
+	c := NewCounter()
+	const host = "evict.com"
+	const grp int64 = 1
+
+	// 先制造一条只在字节维度活跃、命中维度长期零增量的 key。
+	c.AddDomainBytes(host, grp, 100)
+	c.CollectDomainDeltas() // 字节增量被收走，lastBytes 追平，idleCycles=0
+
+	// 此后命中、字节都不再增长，连续闲置达阈值——此时两个基线都已追平，允许回收。
+	for i := 0; i < evictAfterIdleCycles; i++ {
+		c.CollectDomainDeltas()
+	}
+	c.domMu.RLock()
+	n := len(c.domains)
+	c.domMu.RUnlock()
+	if n != 0 {
+		t.Fatalf("命中与字节均追平且闲置达阈值后应被回收，仍剩 %d", n)
+	}
+}
 // （含 eviction），供 -race 检测数据竞争。验证累计总命中数守恒（落库总和 == 注入总数）。
 func TestDomainConcurrentIncAndCollect(t *testing.T) {
 	c := NewCounter()

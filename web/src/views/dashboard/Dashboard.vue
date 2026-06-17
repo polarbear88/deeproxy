@@ -44,6 +44,8 @@ const topUsers = ref([])
 const topDomains = ref([])
 // Top 目标域名卡片独立时间窗（24h/7d，默认 24h；与上方流量图 timeWindow 解耦）。
 const domainWindow = ref('24h')
+// Top 目标域名排序维度：count（命中次数，默认）| bytes（总流量 = 上行+下行）。
+const domainSort = ref('count')
 
 const themeStore = useThemeStore()
 
@@ -142,8 +144,9 @@ async function loadTop() {
 // 与 loadTop 拆开：切换该卡片时间窗时只刷新这一张卡片，不波及分组/用户表。
 async function loadTopDomains() {
   try {
-    // top50：limit 扩大到 50，后端 handleTop 已支持动态 limit，前端同步调大保证数据完整
-    const d = await dashApi.getTopN({ kind: 'domain', limit: 50, window: domainWindow.value })
+    // top50：limit 扩大到 50，后端 handleTop 已支持动态 limit，前端同步调大保证数据完整。
+    // sort 参数透传给后端：count（默认，按命中次数）| bytes（按总流量 = 上行+下行）。
+    const d = await dashApi.getTopN({ kind: 'domain', limit: 50, window: domainWindow.value, sort: domainSort.value })
     topDomains.value = d || []
   } catch {
     topDomains.value = []
@@ -352,18 +355,28 @@ onActivated(() => {
           <template #header>
             <div class="flex-between">
               <span>{{ t('dashboard.topDomains') }}</span>
-              <el-radio-group v-model="domainWindow" size="small" @change="loadTopDomains">
-                <el-radio-button value="24h">24h</el-radio-button>
-                <el-radio-button value="7d">7d</el-radio-button>
-              </el-radio-group>
+              <!-- 时间窗与排序维度各一组 radio，切换时重新加载数据 -->
+              <div style="display:flex;gap:6px;align-items:center">
+                <el-radio-group v-model="domainWindow" size="small" @change="loadTopDomains">
+                  <el-radio-button value="24h">24h</el-radio-button>
+                  <el-radio-button value="7d">7d</el-radio-button>
+                </el-radio-group>
+                <el-radio-group v-model="domainSort" size="small" @change="loadTopDomains">
+                  <el-radio-button value="count">{{ t('dashboard.sortByCount') }}</el-radio-button>
+                  <el-radio-button value="bytes">{{ t('dashboard.sortByTraffic') }}</el-radio-button>
+                </el-radio-group>
+              </div>
             </div>
           </template>
-          <!-- 改为列表：top50 条目用 el-table 替代 EChart 横向柱状图，与 topGroups/topUsers 写法一致；
+          <!-- top50 条目用 el-table，与 topGroups/topUsers 写法一致；
+               显示两列：域名名称、当前排序维度对应值（次数或流量）。
                el-table 自带 empty-text，无需额外 el-empty 分支 -->
-          <el-table :data="topDomains" size="small" :show-header="false" :empty-text="t('common.empty')">
+          <el-table :data="topDomains" size="small" :show-header="true" :empty-text="t('common.empty')">
             <el-table-column prop="name" />
-            <el-table-column align="right" width="100">
-              <template #default="{ row }">{{ row.count }}</template>
+            <el-table-column :label="domainSort === 'bytes' ? t('dashboard.colTraffic') : t('dashboard.sortByCount')" align="right" width="110">
+              <template #default="{ row }">
+                {{ domainSort === 'bytes' ? formatBytes(row.bytes) : row.count }}
+              </template>
             </el-table-column>
           </el-table>
         </el-card>

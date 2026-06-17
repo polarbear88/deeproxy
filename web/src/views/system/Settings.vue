@@ -3,7 +3,7 @@
 // - GET/PUT /settings：{ adminUser, statRetentionDays, hcDefaults:{mode,url,intervalSec,failThreshold,recoverThreshold} }。
 // - 改密 /settings/admin-password {oldPassword,newPassword}（校验旧密码 → 清所有会话）。
 // - 导出 /settings/export → { schemaVersion, data }；导入 /settings/import { schemaVersion, data, strategy }。
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onActivated, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -151,6 +151,13 @@ function onImportFile(uploadFile) {
 }
 
 onMounted(loadSettings)
+
+// keep-alive 下首次进入 onMounted+onActivated 都触发，用 activatedOnce 守卫跳过首帧，之后每次切回刷新
+let activatedOnce = false
+onActivated(() => {
+  if (!activatedOnce) { activatedOnce = true; return }
+  loadSettings()
+})
 </script>
 
 <template>
