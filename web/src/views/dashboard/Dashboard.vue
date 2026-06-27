@@ -371,9 +371,9 @@ onActivated(() => {
           <!-- top50 条目用 el-table，与 topGroups/topUsers 写法一致；
                显示两列：域名名称、当前排序维度对应值（次数或流量）。
                el-table 自带 empty-text，无需额外 el-empty 分支 -->
-          <el-table :data="topDomains" size="small" :show-header="true" :empty-text="t('common.empty')">
+          <el-table :data="topDomains" size="small" :show-header="false" :empty-text="t('common.empty')">
             <el-table-column prop="name" />
-            <el-table-column :label="domainSort === 'bytes' ? t('dashboard.colTraffic') : t('dashboard.sortByCount')" align="right" width="110">
+            <el-table-column width="110">
               <template #default="{ row }">
                 {{ domainSort === 'bytes' ? formatBytes(row.bytes) : row.count }}
               </template>
