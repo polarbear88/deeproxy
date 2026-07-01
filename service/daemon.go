@@ -32,6 +32,16 @@ import (
 // serviceName 是固定的系统服务名（AC-6.2：重跑改写同名服务而非新增）。
 const serviceName = "deeproxy"
 
+// serviceLimitNOFILE 是写入 systemd unit 的 LimitNOFILE 值（文件描述符上限）。
+//
+// 为什么必须设：Go 运行时启动时会自动把 fd【软上限抬到硬上限】（Go 1.19+，os 包 init），
+// 故真正的天花板是【硬上限】。而 systemd 各发行版的 DefaultLimitNOFILE 硬上限差异很大
+// （现代常见 524288，老/受限系统可能仍是 1024）。SOCKS5 中继每条 forward 连接占 2 个 fd
+// （客户端+上游），若硬上限低则高并发会撞 "too many open files"、新请求超时失败。
+// 显式写 LimitNOFILE 把软/硬上限一并抬到足够大，与发行版默认无关（LimitNOFILE 单值即软=硬）。
+// kardianos v1.2.4 会把本值渲染进 [Service] 段的 LimitNOFILE=（仅 systemd；Windows SCM 忽略）。
+const serviceLimitNOFILE = 1048576
+
 // program 是 kardianos service.Interface 的占位实现。
 // 真实业务由「服务被系统拉起后、以过滤参数重新执行本二进制」承担（见文件头注释），
 // 故这里 Start/Stop 不做任何事，仅满足接口签名以便构造 Service 做安装管理。
@@ -119,6 +129,14 @@ func InstallAndStart(startup bool) {
 		} else {
 			cfg.Option["StartType"] = "manual" // 安装但不自启
 		}
+	}
+
+	// systemd 服务的 fd 硬上限随发行版默认而定（可能低至 1024），而 Go 运行时只能把软上限
+	// 抬到硬上限——硬上限低时高并发仍会 "too many open files"、请求超时失败。给生成的 unit
+	// 写入 LimitNOFILE 把硬上限一并抬高（详见 serviceLimitNOFILE 常量注释）。
+	// kardianos 仅在 systemd 模板用此项，Windows SCM 忽略。
+	if runtime.GOOS == "linux" {
+		cfg.Option["LimitNOFILE"] = serviceLimitNOFILE
 	}
 
 	svc, err := service.New(&program{}, cfg)
